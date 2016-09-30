@@ -28,7 +28,7 @@
  * SOFTWARE.
  */
 
- *include <TimeLib.h>
+#include <TimeLib.h>
 
 elapsedMillis displayCounter;
 
@@ -69,7 +69,7 @@ time_t getTeensy3Time()
 }
 
 /*  code to process time sync messages from the serial port   */
- *define TIME_HEADER  "T"   // Header tag for serial time sync message
+#define TIME_HEADER  "T"   // Header tag for serial time sync message
 
 uint32_t processSyncMessage() {
   uint32_t pctime = 0L;
