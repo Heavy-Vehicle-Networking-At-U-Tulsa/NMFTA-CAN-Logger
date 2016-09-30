@@ -2,7 +2,7 @@
 A repository supporting the low cost controller area network (CAN) logger devices commissioned for the National Motor Freight Traffic Association
 
 
-Supporting website: 
+Supporting website: https://heavy-vehicle-networking-at-u-tulsa.github.io/NMFTA-CAN-Logger/
 
 ## Project Description
 
