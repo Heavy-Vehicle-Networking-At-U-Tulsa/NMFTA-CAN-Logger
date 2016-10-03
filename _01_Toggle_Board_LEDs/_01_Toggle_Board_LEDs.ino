@@ -32,7 +32,6 @@
  * SOFTWARE.
  */
 
- */
 
 
 // Declare pin numbers for the LED based on the schematic
@@ -46,7 +45,7 @@ boolean redLEDstate = true;
 //Declare a millisecond timer to execute the switching of the LEDs on a set time
 elapsedMillis toggleTimer;
 
-#define LEDtoggleTime 500
+#define LEDtoggleTime 100
 
 void setup() {
   // put your setup code here, to run once:
