@@ -156,8 +156,9 @@ const uint8_t GREEN_LED_PIN = 23;
 // The program creates a contiguous file with FILE_BLOCK_COUNT 512 byte blocks.
 // This file is flash erased using special SD commands.  The file will be
 // truncated if logging is stopped early.
-//const uint32_t FILE_BLOCK_COUNT = 256000;
-const uint32_t FILE_BLOCK_COUNT = 2097152; //1 GB
+//const uint32_t FILE_BLOCK_COUNT = 256;
+//const uint32_t FILE_BLOCK_COUNT = 2097152; //1 GB
+const uint32_t FILE_BLOCK_COUNT = 4194304; //2 GB
 //const uint32_t FILE_BLOCK_COUNT = 8388607; //4 GB - 512
 
 
@@ -425,17 +426,17 @@ void logData() {
       binName[BASE_NAME_SIZE + 2]++;
     }
     else {
-      binName[BASE_NAME_SIZE + 1] = '0';
+      binName[BASE_NAME_SIZE + 2] = '0';
+      if (binName[BASE_NAME_SIZE + 1] != '9') {
+        binName[BASE_NAME_SIZE + 1]++;
+      }
+      else {
+        binName[BASE_NAME_SIZE+1] = '0';
+        binName[BASE_NAME_SIZE]++;
+      }
     }
     
-   if (binName[BASE_NAME_SIZE + 1] != '9') {
-      binName[BASE_NAME_SIZE + 1]++;
-    }
-    else {
-      binName[BASE_NAME_SIZE + 1] = '0';
-      binName[BASE_NAME_SIZE]++;
-    }
-    if (binName[BASE_NAME_SIZE] == '9') {
+   if (binName[BASE_NAME_SIZE] == '9' & binName[BASE_NAME_SIZE+1] == '9' & binName[BASE_NAME_SIZE+2] == '9') {
         error("Can't create file name");
     }
   }
