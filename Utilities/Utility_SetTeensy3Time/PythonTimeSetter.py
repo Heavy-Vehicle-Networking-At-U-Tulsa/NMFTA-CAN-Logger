@@ -32,27 +32,42 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-#
+# Depends on PySerial:
+# https://github.com/pyserial/pyserial
 
 import time
 import serial
+import serial.tools.list_ports
 
-#Be sure the serial port is closed before running.
-comPort = "COM5" #Change this according to where the Teensy device is connected
+TeensyFound = False
 
-currentTime = time.time()
-previousTime = currentTime
+for possibleCOMPort in serial.tools.list_ports.comports():
+    print(possibleCOMPort)
+    if ('Teensy' in str(possibleCOMPort)):
+        print("Found Teensy! Trying to set time.")
+        comPort = str(possibleCOMPort)[0:5] #Gets the first digits
+        TeensyFound = True
+        break
 
-timeZoneOffset = 0
 
-#Press Ctrl-C to exit the loop
-while True:
+if TeensyFound:
+    print("Press Ctrl-C to exit")
+    print("Be sure all programs with COM ports connected to the Teensy are closed.")
+
     currentTime = time.time()
-    if (currentTime - previousTime >= 1): #Run the following every second
-        previousTime = currentTime
-        with serial.Serial(comPort) as ser:
-            
-            ser.write(b'T')
-            ser.write(bytes("T%d\r\n" %(currentTime-timeZoneOffset*3600),'ascii'))
-            
-            print(ser.readline()) #Should display the time of the Teensy as bytes
+    previousTime = currentTime
+
+    timeZoneOffset = 0
+   
+    while TeensyFound:
+        currentTime = time.time()
+        if (currentTime - previousTime >= 1): #Run the following every second
+            previousTime = currentTime
+            with serial.Serial(comPort) as ser:
+                
+                ser.write(b'T')
+                ser.write(bytes("T%d\r\n" %(currentTime-timeZoneOffset*3600),'ascii'))
+                
+                print(ser.readline()) #Should display the time of the Teensy as bytes
+else:
+    print("Teensy Not Found. Please plug in and make sure drivers have installed.")
