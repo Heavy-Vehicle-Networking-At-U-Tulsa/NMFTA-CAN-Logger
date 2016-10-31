@@ -12,7 +12,7 @@
  */
 
 #include <FlexCAN.h>
-#define BAUDRATE 250000
+#define BAUDRATE 1000000
 
 FlexCAN CANbus(BAUDRATE);
 static CAN_message_t txmsg,rxmsg;
