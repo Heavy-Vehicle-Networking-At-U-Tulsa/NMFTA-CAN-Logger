@@ -60,6 +60,40 @@
 // Edit this include file to change data_t.
 #include "UserDataType.h"  
 
+const int millisBetweenRequests = 5000;
+
+#define numRequests 4
+const uint16_t PGNRequestList[numRequests] = {
+  //65261, // Cruise Control/Vehicle Speed Setup
+  //65214, // Electronic Engine Controller 4
+  65259, // Component Identification
+  65242, // Software Identification
+  //65244, // Idle Operation
+  65260, // Vehicle Identification
+  //65255, // Vehicle Hours
+  //65253, // Engine Hours, Revolutions
+  //65257, // Fuel Consumption (Liquid)
+  //65256, // Vehicle Direction/Speed
+  //65254, // Time/Date
+  //65211, // Trip Fan Information
+  //65210, // Trip Distance Information
+  //65209, // Trip Fuel Information (Liquid)
+  //65207, // Engine Speed/Load Factor Information
+  //65206, // Trip Vehicle Speed/Cruise Distance Information
+  //65205, // Trip Shutdown Information
+  //65204, // Trip Time Information 1
+  //65200, // Trip Time Information 2
+  //65250, // Transmission Configuration
+  //65203, // Fuel Information (Liquid)
+  //65201, // ECU History
+  //65168, // Engine Torque History
+  //64981, // Electronic Engine Controller 5
+  //64978, // ECU Performance
+  64965, // ECU Identification Information
+  //65165  // Vehicle Electrical Power #2
+};
+
+uint8_t pgnIndex = 0;
 
 #define numBaudRates 4
 uint32_t baudRateList[numBaudRates] = {250000,500000,125000,1000000}; 
@@ -70,6 +104,7 @@ static CAN_message_t rxmsg,txmsg;
 elapsedMicros microsecondsPerSecond;
 elapsedMillis lastCANmessageTimer;
 elapsedMillis LEDblinkTimer;
+elapsedMillis requestTimer;
 
 boolean redLEDstate;
 boolean greenLEDstate;
@@ -615,6 +650,21 @@ void logData(uint32_t baudrate) {
 
         }
         
+        if (requestTimer >= millisBetweenRequests) {
+          requestTimer = 0;
+          uint16_t pgnToRequest = PGNRequestList[pgnIndex];
+          pgnIndex++;
+          if (pgnIndex > numRequests ) pgnIndex = 0;
+      
+          txmsg.ext = 1;
+          txmsg.id = 0x18EA00F9; //request PGN
+          txmsg.buf[0] = (pgnToRequest & 0x0000FF);
+          txmsg.buf[1] = (pgnToRequest & 0x00FF00) >> 8 ;
+          txmsg.buf[2] = (pgnToRequest & 0xFF0000) >> 16; //These are in reverse byte order.
+          txmsg.len = 3;
+          CANbus.write(txmsg);
+        }
+        
         if (LEDblinkTimer >= 500){
           LEDblinkTimer = 0; 
           greenLEDstate = !greenLEDstate;
@@ -730,7 +780,7 @@ time_t getTeensy3Time(){
 
 void setup(void) {
   
-
+  //Define the pin modes and outputs according to the schematic and datasheets
   pinMode(ERROR_LED_PIN, OUTPUT);
   pinMode(GREEN_LED_PIN, OUTPUT);
   pinMode(CAN1_TERMINATION_PIN, OUTPUT); 
@@ -744,7 +794,7 @@ void setup(void) {
   
   pinMode(SD_CONTACT_PIN, INPUT_PULLUP);
 
-  digitalWrite(CAN1_TERMINATION_PIN,HIGH);
+  digitalWrite(CAN1_TERMINATION_PIN,HIGH); //HIGH is for an open switch
   digitalWrite(CAN2_TERMINATION_PIN,HIGH);
   digitalWrite(CAN_CONNECT_PIN,HIGH);
   digitalWrite(MCP_RESET_PIN,HIGH);
@@ -757,6 +807,9 @@ void setup(void) {
   digitalWrite(GREEN_LED_PIN,HIGH);
   delay(1000);
   digitalWrite(GREEN_LED_PIN,LOW);
+
+  if(digitalRead(SD_CONTACT_PIN)) Serial.println("SD Card not Detected. Please insert formatted card and reboot.");
+  else Serial.println("SD Card present.");
   
   setSyncProvider(getTeensy3Time);
   if (timeStatus()!= timeSet) {
@@ -795,10 +848,7 @@ void setup(void) {
   sprintf(timeString,"%04d-%02d-%02dT%02d:%02d:%02d,%d",year(),month(),day(),hour(),minute(),second(),baudrate);
   baudFile.println(timeString);
   baudFile.close();
-  
-  randomSeed(now());
 }
-
 
 void loop(void) {
   logData(baudrate);
