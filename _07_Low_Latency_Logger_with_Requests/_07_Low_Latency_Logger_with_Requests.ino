@@ -1,94 +1,120 @@
 /*
+ * NMFTA CAN Logger Project
+ * 
+ * Arduino Sketch to test the ability to receive CAN messages
+ * 
+ * Written By Dr. Jeremy S. Daily
+ * The University of Tulsa
+ * Department of Mechanical Engineering
+ * 
+ * 29 September 2016
+ * 
+ * Released under the MIT License
+ *
+ * Copyright (c) 2016        Jeremy S. Daily
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * 
+ * 
  * This program logs data to a binary file.  Functions are included
  * to convert the binary file to a csv text file.
  *
  * Samples are logged at regular intervals.  The maximum logging rate
- * depends on the quality of your SD card and the time required to
- * read sensor data.  This example has been tested at 500 Hz with
- * good SD card on an Uno.  4000 HZ is possible on a Due.
- *
- * If your SD card has a long write latency, it may be necessary to use
- * slower sample rates.  Using a Mega Arduino helps overcome latency
- * problems since 13 512 byte buffers will be used.
- *
+ * depends on the quality of your SD card. 
+ * 
  * Data is written to the file using a SD multiple block write command.
+ * 
+ * Much of this sketch was inspired by the examples from https://github.com/greiman/SdFat
+ * 
  */
 
 // log file base name.  Must be five characters or less. Change this line for each upload
 // The first four characters should match the label on the cable.
 #define FILE_BASE_NAME "TU01_"
- 
+
+//included libraries 
 #include <SPI.h>
 #include <SdFat.h>
 #include <SdFatUtil.h>
+//#include <StdioStream.h>
 #include <FlexCAN.h>
-#include "kinetis_flexcan.h"
 #include <TimeLib.h>
-#include <EEPROM.h>
 
 // User data functions.  Modify these functions for your data items.
-#include "UserDataType.h"  // Edit this include file to change data_t.
+// Edit this include file to change data_t.
+#include "UserDataType.h"  
 
-TimeElements tm;
-//set up a variable to keep track of the timestamp
-time_t previousTime = 0;
+
+#define numBaudRates 4
+uint32_t baudRateList[numBaudRates] = {250000,500000,125000,1000000}; 
+uint32_t baudrate = 250000; //default (may be overwritten with autobaud detection)
 
 static CAN_message_t rxmsg,txmsg;
 
-//------------------------------------------------------------------------------
-uint32_t getBaudRate() {
-  uint32_t baudRateList[3] = {250000,500000,125000}; 
-  rxmsg.timeout = 1000;
-  digitalWrite(LED_BUILTIN,HIGH);
-  while (1){
-    for(uint8_t i=0;i<sizeof(baudRateList);i++){
-      uint32_t baudrate = baudRateList[i];
-      Serial.print(F("Trying Baudrate of "));
-      Serial.println(baudrate);
-      FlexCAN testBus(baudrate);
-      Serial.println(F("Beginning test."));
-      testBus.begin();
-      if(testBus.read(rxmsg)){
-        Serial.print("Baudrate is confirmed to be ");
-        Serial.println(baudrate);
-        return baudrate;
-      }
-      else{
-       testBus.end();
-//       delete testBus
-      }
-      Serial.println(F("Trying again."));
-    }   
-  }
-}
-
-FlexCAN CANbus(getBaudRate());
-
-IntervalTimer oneSecondReset;
 elapsedMicros microsecondsPerSecond;
-elapsedMillis buttonPressTimer;
 elapsedMillis lastCANmessageTimer;
 elapsedMillis LEDblinkTimer;
 
 boolean redLEDstate;
 boolean greenLEDstate;
 
-uint32_t rxCount = 0;
 //set up a display buffer
 char displayBuffer[100]; 
+char serialInput;
 
+//Pin Definitions (See Schematics)
+// SD chip select pin.
+const uint8_t SD_CS_PIN = 15;
 
-void resetMicros() {
-  microsecondsPerSecond = 0; //reset the timer
-}
+// Reset pin 
+const uint8_t MCP_RESET_PIN = 9;
+
+// standBy pin 
+const uint8_t MCP_STDBY_PIN = 10;
+
+// chip select pin 
+const uint8_t MCP_CS_PIN = 20;
+
+// chip select pin 
+const uint8_t MCP_INT_PIN = 17;
+
+// SD Card Contact Pin 
+const uint8_t SD_CONTACT_PIN = 14;
+
+//CAN Connect Pins
+const uint8_t CAN_CONNECT_PIN = 2;
+const uint8_t CAN1_TERMINATION_PIN = 16;
+const uint8_t CAN2_TERMINATION_PIN = 21;
+
+// The led blinks for fatal errors. The led goes on solid for SD write
+// overrun errors and logging continues.
+const uint8_t ERROR_LED_PIN = 22;
+const uint8_t GREEN_LED_PIN = 23;
+
 
 // Acquire a data record.
 void acquireCANData(data_t* data) {
   data->timeStamp = now();
   data->usec = micros();
   data->ID =  rxmsg.id; 
-  data->DLC = (rxmsg.len << 24) | (0x00FFFFFF & uint32_t(microsecondsPerSecond));
-  memset(data->dataField,0xFF,8);
+  data->DLC = (rxmsg.len << 24) | (0x00FFFFFF & uint32_t(microsecondsPerSecond)); //This structure condenses storage
+  memset(data->dataField,0xFF,8); //Set to 0xFF if not used.
   for (uint8_t i = 0; i < rxmsg.len; i++){
     data->dataField[i] = rxmsg.buf[i];  
   }
@@ -102,7 +128,7 @@ void printData(Print* pr, data_t* data) {
   sprintf(timeString,"%04d-%02d-%02d,%02d:%02d:%02d.%06d,",year(recordTime),month(recordTime),day(recordTime),hour(recordTime),minute(recordTime),second(recordTime),usecPerSec);
   pr->print(timeString);
   
-  sprintf(timeString,"%10d.%06d",data->timeStamp,usecPerSec);
+  sprintf(timeString,"%10d.%06d,",data->timeStamp,usecPerSec);
   pr->print(timeString);
   
   pr->print(data->usec);
@@ -121,7 +147,7 @@ void printData(Print* pr, data_t* data) {
 
 // Print data header.
 void printHeader(Print* pr) {
-  pr->print(F("YYYY-MM-DD HH:MM:SS.usec,"));
+  pr->print(F("YYYY-MM-DD,HH:MM:SS.usec,"));
   pr->print(F("Unix timeStamp,"));
   pr->print(F("System uSecs,"));
   pr->print(F("ID,"));
@@ -132,45 +158,7 @@ void printHeader(Print* pr) {
   }
   pr->println();
 }
-//==============================================================================
-// Start of configuration constants.
-//==============================================================================
-//Interval between data records in microseconds.
-const uint32_t LOG_INTERVAL_USEC = 200;
-//------------------------------------------------------------------------------
-// Pin definitions.
-//
-// SD chip select pin.
-const uint8_t SD_CS_PIN = 15;
 
-
-// Reset pin 
-const uint8_t MCP_RESET_PIN = 9;
-
-// standBy pin 
-const uint8_t MCP_STDBY_PIN = 10;
-
-// chip select pin 
-const uint8_t MCP_CS_PIN = 20;
-
-// chip select pin 
-const uint8_t MCP_INT_PIN = 17;
-
-// SD Card Contact Pin 
-const uint8_t SD_CONTACT_PIN = 14;
-
-//CAN Connec Pins
-const uint8_t CAN_CONNECT_PIN = 2;
-const uint8_t CAN1_TERMINATION_PIN = 16;
-const uint8_t CAN2_TERMINATION_PIN = 21;
-
-
-//
-// Digital pin to indicate an error, set to -1 if not used.
-// The led blinks for fatal errors. The led goes on solid for SD write
-// overrun errors and logging continues.
-const uint8_t ERROR_LED_PIN = 22;
-const uint8_t GREEN_LED_PIN = 23;
 
 
 //------------------------------------------------------------------------------
@@ -212,17 +200,14 @@ const uint8_t BUFFER_BLOCK_COUNT = 4;
 // Use total of 13 512 byte buffers.
 const uint8_t BUFFER_BLOCK_COUNT = 12;
 #endif  // RAMEND
-//==============================================================================
-// End of configuration constants.
-//==============================================================================
+
 // Temporary log file.  Will be deleted if a reset or power failure occurs.
-#define TMP_FILE_NAME "tmp_log.bin"
+char TMP_FILE_NAME[13] = "tmp_data.bin";
 
 // Size of file base name.  Must not be larger than five.
 const uint8_t BASE_NAME_SIZE = sizeof(FILE_BASE_NAME) - 1;
 
 SdFat sd;
-
 SdBaseFile binFile;
 
 char binName[13] = FILE_BASE_NAME "000.bin";
@@ -239,6 +224,42 @@ struct block_t {
   data_t data[DATA_DIM];
   uint8_t fill[FILL_DIM];
 };
+
+
+/*
+ * ------------------------------------------------------------------------------
+ * Function: getBaudRate
+ * 
+ * returns one of the predefined CAN bauds rates
+ * 
+ * This function will always run until a CAN message is received. Therefore, the first messages may not be captured if
+ * the program starts on a live bus. 
+*/
+uint32_t getBaudRate() {
+  rxmsg.timeout = 100;
+  digitalWrite(LED_BUILTIN,HIGH);
+  while (1){
+    for(uint8_t i=0;i<numBaudRates;i++){
+      uint32_t baudrate = baudRateList[i];
+      Serial.print(F("Trying Baudrate of "));
+      Serial.println(baudrate);
+      FlexCAN testBus(baudrate);
+      //Serial.println(F("Beginning test."));
+      testBus.begin();
+      if(testBus.read(rxmsg)){
+        Serial.print("Baudrate is confirmed to be ");
+        Serial.println(baudrate);
+        digitalWrite(LED_BUILTIN,LOW);
+        return baudrate;
+      }
+      else{
+       testBus.end();
+      }
+      //Serial.println(F("Trying again."));
+    }   
+  }
+}
+
 
 //------------------------------------------------------------------------------
 /*
@@ -310,7 +331,7 @@ void binaryToCsv() {
   binFile.rewind();
   // Create a new csvFile.
   strcpy(csvName, binName);
-  strcpy(&csvName[BASE_NAME_SIZE + 3], "csv");
+  strcpy(&csvName[BASE_NAME_SIZE + 4], ".csv");
 
   if (!csvFile.open(csvName, O_WRITE | O_CREAT | O_TRUNC)) {
     error("open csvFile failed");
@@ -429,13 +450,22 @@ void dumpData() {
   }
   Serial.println(F("Done"));
 }
+
+
 //------------------------------------------------------------------------------
 // log data
 // max number of blocks to erase per erase call
 uint32_t const ERASE_SIZE = 262144L;
-void logData() {
+void logData(uint32_t baudrate) {
+  digitalWrite(ERROR_LED_PIN,HIGH);
+  FlexCAN CANbus(baudrate);
+  CANbus.begin();
+  rxmsg.timeout = 0;
+  
+  
   uint32_t bgnBlock, endBlock;
   lastCANmessageTimer = 0;
+  
   // Allocate extra buffer space.
   block_t block[BUFFER_BLOCK_COUNT];
   block_t* curBlock = 0;
@@ -464,19 +494,18 @@ void logData() {
         error("Can't create file name");
     }
   }
+//  memset(TMP_FILE_NAME,0,sizeof(TMP_FILE_NAME));
+//  for(uint8_t i = 0; i<8; i++){
+//    TMP_FILE_NAME[i] = random(65,91);  
+//  }
+//  strncat(TMP_FILE_NAME, ".tmp",4);
   
-  // Delete old tmp file.
-  if (sd.exists(TMP_FILE_NAME)) {
-    Serial.println(F("Deleting tmp file"));
-    if (!sd.remove(TMP_FILE_NAME)) {
-      error("Can't remove tmp file");
-    }
-  }
+  
   // Create new file.
-  Serial.println(F("Creating new file"));
+  Serial.print(F("Creating new file "));
+  Serial.println(TMP_FILE_NAME);
   binFile.close();
-  if (!binFile.createContiguous(sd.vwd(),
-                                TMP_FILE_NAME, 512 * FILE_BLOCK_COUNT)) {
+  if (!binFile.createContiguous(sd.vwd(),TMP_FILE_NAME, 512 * FILE_BLOCK_COUNT)) {
     error("createContiguous failed");
   }
   // Get the address of the file on the SD.
@@ -490,7 +519,7 @@ void logData() {
   }
 
   // Flash erase all data in the file.
-  Serial.println(F("Erasing all data"));
+  Serial.println(F("Initializing Temporary File"));
   uint32_t bgnErase = bgnBlock;
   uint32_t endErase;
   while (bgnErase < endBlock) {
@@ -525,10 +554,10 @@ void logData() {
   Serial.println(F("Waiting for CAN Messages..."));
   while (CANbus.read(rxmsg) == 0);
   Serial.println(F("CAN Message Found."));
-  
   Serial.println(F("Logging - type any character to stop"));
   // Wait for Serial Idle.
   Serial.flush();
+  //while(Serial.available()) Serial.read();
   delay(10);
   uint32_t bn = 0;
   uint32_t t0 = millis();
@@ -538,42 +567,28 @@ void logData() {
   uint32_t count = 0;
   uint32_t maxLatency = 0;
   int32_t diff;
-  // Start at a multiple of interval.
-  uint32_t logTime = micros()/LOG_INTERVAL_USEC + 1;
-  logTime *= LOG_INTERVAL_USEC;
+//  // Start at a multiple of interval.
+//  uint32_t logTime = micros()/LOG_INTERVAL_USEC + 1;
+//  logTime *= LOG_INTERVAL_USEC;
   bool closeFile = false;
 
-  //Write the new message to RAM
-  //acquireCANData(&curBlock->data[curBlock->count++]);
   
   digitalWrite(GREEN_LED_PIN,HIGH);
-  while (1) {
-    if (now() - previousTime >= 1){
-      previousTime = now();
-      microsecondsPerSecond = 0;
-    }
+  digitalWrite(ERROR_LED_PIN,LOW);
   
-    // Time for next data record.
-    //logTime += LOG_INTERVAL_USEC;
+  while (1) {
     if (Serial.available()) {
       closeFile = true;
-      buttonPressTimer = 0;
+      serialInput = Serial.read();
     }
 
     if (closeFile) {
-      Serial.println(F("Closing Temp Buffer File."));
-     // Serial.print("curBlock: ");
-     // Serial.println(curBlock);
-      Serial.print("curBlock->count: ");
-      Serial.println(curBlock->count);
       
       
       if (curBlock != 0 && curBlock->count >= 0) {
         // Put buffer in full queue.
         fullQueue[fullHead] = curBlock;
         fullHead = queueNext(fullHead);
-        Serial.print(F("Updated fullHead to "));
-        Serial.println(fullHead);
         curBlock = 0;
       }
     } 
@@ -586,12 +601,7 @@ void logData() {
         curBlock->overrun = overrun;
         overrun = 0;
       }
-//      do {
-//        diff = logTime - micros();
-//      } while(diff > 0);
-//      if (diff < -10) {
-//        error("LOG_INTERVAL_USEC too small");
-//      }
+
       if (curBlock == 0) {
         overrun++;
         Serial.print(F("Overrun: "));
@@ -602,20 +612,7 @@ void logData() {
         if (CANbus.read(rxmsg)){
           acquireCANData(&curBlock->data[curBlock->count++]);
           lastCANmessageTimer = 0;
-//          rxCount++;
-//          
-//          uint32_t ID = rxmsg.id;
-//          uint8_t len = rxmsg.len;
-//          
-//          sprintf(displayBuffer,"%10i %04i-%02i-%02i %02i:%02i:%02i.%06d %08X %1i",rxCount,year(),month(),day(),hour(),minute(),second(),int(microsecondsPerSecond),ID,len);
-//          Serial.print(displayBuffer); 
-//            
-//          for (uint8_t i = 0; i<len;i++){ 
-//            char byteDigits[4]; 
-//            sprintf(byteDigits," %02X",rxmsg.buf[i]);
-//            Serial.print(byteDigits); 
-//          }
-//          Serial.println();
+
         }
         
         if (LEDblinkTimer >= 500){
@@ -624,7 +621,7 @@ void logData() {
           digitalWrite(GREEN_LED_PIN,greenLEDstate);
         }
 
-        if (lastCANmessageTimer > 30000) closeFile = true; //Close the file after 30 seconds of CAN silence
+        if (lastCANmessageTimer > 10000) closeFile = true; //Close the file after 10 seconds of CAN silence
         
         if (curBlock->count >= DATA_DIM) {
           //Serial.println(F("curBlock->count >= DATA_DIM"));
@@ -641,15 +638,16 @@ void logData() {
       if (closeFile) {
         break;
       }
-    } else if (!sd.card()->isBusy()) {
-      //Serial.println(F("!sd.card()->isBusy()"));
+    } 
+    else if (!sd.card()->isBusy()) {
+      
       // Get address of block to write.
       block_t* pBlock = fullQueue[fullTail];
       fullTail = queueNext(fullTail);
       // Write block to SD.
       uint32_t usec = micros();
       if (!sd.card()->writeData((uint8_t*)pBlock)) {
-        error(F("write data failed"));
+        error("write data failed");
       }
       usec = micros() - usec;
       t1 = millis();
@@ -670,23 +668,22 @@ void logData() {
       emptyHead = queueNext(emptyHead);
       bn++;
       if (bn == FILE_BLOCK_COUNT) {
-         Serial.println(F("bn == FILE_BLOCK_COUNT"));
         // File full so stop
         closeFile = true;
         break;
       }
     }
   }
+  Serial.println(F("Closing Temp Buffer File."));
+      
   if (!sd.card()->writeStop()) {
     error("writeStop failed");
   }
-  digitalWrite(ERROR_LED_PIN, LOW);
+  digitalWrite(ERROR_LED_PIN, HIGH);
   digitalWrite(GREEN_LED_PIN, LOW);
   // Truncate file if recording stopped early.
   if (bn != FILE_BLOCK_COUNT) {
     Serial.println(F("Truncating file"));
-    Serial.print(F("uint32_t(512 * bn)"));
-    Serial.println(uint32_t(512 * bn));
     if (!binFile.truncate(uint32_t(512 * bn))) {
       error("Can't truncate file");
     }
@@ -696,6 +693,16 @@ void logData() {
   }
   Serial.print(F("File renamed: "));
   Serial.println(binName);
+
+  // Delete old tmp file.
+  if (sd.exists(TMP_FILE_NAME)) {
+    Serial.print(F("Deleting tmp file "));
+    Serial.println(TMP_FILE_NAME);
+    if (!sd.remove(TMP_FILE_NAME)) {
+      error("Can't remove tmp file");
+    }
+  }
+  
   Serial.print(F("Max block write usec: "));
   Serial.println(maxLatency);
   Serial.print(F("Record time sec: "));
@@ -707,17 +714,22 @@ void logData() {
   Serial.print(F("Overruns: "));
   Serial.println(overrunTotal);
   Serial.println(F("Done"));
+
+  if (serialInput == 'd') dumpData();
+  else if (serialInput == 'c') binaryToCsv();
+  while(Serial.available()) Serial.read(); // flush the input buffer
+  serialInput = ' ';
+  
 }
 //------------------------------------------------------------------------------
 
-time_t getTeensy3Time()
-{
+time_t getTeensy3Time(){
+  microsecondsPerSecond = 0;
   return Teensy3Clock.get();
 }
 
 void setup(void) {
-  CANbus.begin();
-  rxmsg.timeout = 0;
+  
 
   pinMode(ERROR_LED_PIN, OUTPUT);
   pinMode(GREEN_LED_PIN, OUTPUT);
@@ -744,7 +756,6 @@ void setup(void) {
   digitalWrite(ERROR_LED_PIN,HIGH);
   digitalWrite(GREEN_LED_PIN,HIGH);
   delay(1000);
-  digitalWrite(ERROR_LED_PIN,LOW);
   digitalWrite(GREEN_LED_PIN,LOW);
   
   setSyncProvider(getTeensy3Time);
@@ -753,17 +764,13 @@ void setup(void) {
   } else {
     Serial.println("RTC has set the system time");
   }
-
- 
-  
-  char timeString[22];
-  time_t previousTime = now();
-  while (now() - previousTime < 1) resetMicros();
-  oneSecondReset.begin(resetMicros,1000000);
-  
+  setSyncInterval(1);
+  char timeString[32];
   sprintf(timeString,"%04d-%02d-%02d %02d:%02d:%02d.%06d",year(),month(),day(),hour(),minute(),second(),uint32_t(microsecondsPerSecond));
   Serial.println(timeString);
   
+  baudrate = getBaudRate(); //comment this line out to accept the default
+
   Serial.print(F("FreeRam: "));
   Serial.println(FreeRam());
   Serial.print(F("Records/block: "));
@@ -771,6 +778,7 @@ void setup(void) {
   if (sizeof(block_t) != 512) {
     error("Invalid block size");
   }
+  
   // initialize file system.
   if (!sd.begin(SD_CS_PIN, SPI_FULL_SPEED)) {
     sd.initErrorPrint();
@@ -779,69 +787,94 @@ void setup(void) {
   // set date time callback function
   SdFile::dateTimeCallback(dateTime);
 
-  //before entering the loop, set the microsecondprevious time
-  previousTime = now();
-  //synchronize the millisecondPerSecond timer
-  while (now() - previousTime < 1){
-    microsecondsPerSecond = 0;
-  }  
+  baudrate = getBaudRate(); //comment this line out to accept the default
+
+
+  SdFile baudFile;
+  baudFile.open("baudRate.txt", O_RDWR | O_CREAT | O_AT_END);
+  sprintf(timeString,"%04d-%02d-%02dT%02d:%02d:%02d,%d",year(),month(),day(),hour(),minute(),second(),baudrate);
+  baudFile.println(timeString);
+  baudFile.close();
+  
+  randomSeed(now());
+  truncateTempfiles();
+  
 }
 
-
-
-
-//------------------------------------------------------------------------------
 
 void loop(void) {
-  logData(); // automatically start logging. Otherwise use the button
+  logData(baudrate);
 }
 
-/*
- * Old Loop code
- * 
- * if (ERROR_LED_PIN >= 0) {
-    digitalWrite(ERROR_LED_PIN, LOW);
-  }
-  
-  // discard any input
-  while (Serial.read() >= 0) {}
-  
-  Serial.println();
-  Serial.println(F("type:"));
-  Serial.println(F("c - convert file to csv"));
-  Serial.println(F("d - dump data to Serial"));
-  Serial.println(F("e - overrun error details"));
-  Serial.println(F("r - record data"));
 
- while(!Serial.available() )  ;
+void truncateTempfiles(){
+  digitalWrite(ERROR_LED_PIN,HIGH);
+  digitalWrite(GREEN_LED_PIN,HIGH);
+  if (sd.exists(TMP_FILE_NAME)) {
+    Serial.println("Found exsiting temp file."); 
+    
+    SdBaseFile tempFile;
+ 
+    tempFile.open(TMP_FILE_NAME, O_RDWR);
+    for (uint32_t i = 0; i < FILE_BLOCK_COUNT; i++){
+      tempFile.seekSet(i*512L);
+      byte someBytes[4];
+      for (int j = 0;j<4;j++){
+        someBytes[j] = tempFile.read();
+      }
+      if ( someBytes[0]==0xFF & someBytes[1]==0xFF & someBytes[2]==0xFF & someBytes[3]==0xFF){
+          Serial.println("Trunating File.");
+          if (!tempFile.truncate(uint32_t(512L * i))){
+            error("Can't truncate file");
+          }
+          Serial.print("Truncated temp file to ");
+          Serial.println( uint32_t(512L * i));
+          if(i == 0) {
+            Serial.println("Zero length temp file encountered. Ignoring.");
+            return;
+          }
+          break;
+      }
+  }
+    
+ 
+  // Find unused file name.
+  if (BASE_NAME_SIZE > 5) {
+    error("FILE_BASE_NAME too long");
+  }
+  while (sd.exists(binName)) {
+    if (binName[BASE_NAME_SIZE + 2] != '9') {
+      binName[BASE_NAME_SIZE + 2]++;
+    }
+    else {
+      binName[BASE_NAME_SIZE + 2] = '0';
+      if (binName[BASE_NAME_SIZE + 1] != '9') {
+        binName[BASE_NAME_SIZE + 1]++;
+      }
+      else {
+        binName[BASE_NAME_SIZE+1] = '0';
+        binName[BASE_NAME_SIZE]++;
+      }
+    }
+    
+   if (binName[BASE_NAME_SIZE] == '9' & binName[BASE_NAME_SIZE+1] == '9' & binName[BASE_NAME_SIZE+2] == '9') {
+        error("Can't create file name");
+    }
+  }
+  Serial.print("Created new filename of ");
+  Serial.println(binName);
   
-  buttonPressTimer = 0;
-  delay(50); //debounce
-  char c;
-  if (Serial.available()) c = tolower(Serial.read());
-  while (Serial.read() >= 0);
- // if (!digitalRead(BUTTON_PIN)) c = 'r';
- // while (!digitalRead(BUTTON_PIN)){
-//    if (buttonPressTimer > 2000){
-//      c='c';
-//      break;
-//    }
-//  }
-  
-  if (c == 'c') {
-    analogWrite(ERROR_LED_PIN,64);
-    binaryToCsv();
-    analogWrite(ERROR_LED_PIN,0);
-  } else if (c == 'd') {
-    dumpData();
-  } else if (c == 'e') {
-    checkOverrun();
-  } else if (c == 'r') {
-    logData();
-  } else {
-    Serial.println(F("Invalid entry"));
+   
+  if (!tempFile.rename(sd.vwd(), binName)) {
+    error("Can't rename file");
   }
   
-  digitalWrite(ERROR_LED_PIN, LOW);
-  
- */
+  Serial.print(F("File renamed: "));
+  Serial.println(binName);
+
+  tempFile.close();
+
+  }
+  digitalWrite(GREEN_LED_PIN,LOW);
+}
+
