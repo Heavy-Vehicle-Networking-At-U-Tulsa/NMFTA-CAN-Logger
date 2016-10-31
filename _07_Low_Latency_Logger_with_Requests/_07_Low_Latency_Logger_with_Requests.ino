@@ -769,8 +769,6 @@ void setup(void) {
   sprintf(timeString,"%04d-%02d-%02d %02d:%02d:%02d.%06d",year(),month(),day(),hour(),minute(),second(),uint32_t(microsecondsPerSecond));
   Serial.println(timeString);
   
-  baudrate = getBaudRate(); //comment this line out to accept the default
-
   Serial.print(F("FreeRam: "));
   Serial.println(FreeRam());
   Serial.print(F("Records/block: "));
@@ -786,7 +784,9 @@ void setup(void) {
   }
   // set date time callback function
   SdFile::dateTimeCallback(dateTime);
-
+  
+  truncateTempfiles();
+  
   baudrate = getBaudRate(); //comment this line out to accept the default
 
 
@@ -797,8 +797,6 @@ void setup(void) {
   baudFile.close();
   
   randomSeed(now());
-  truncateTempfiles();
-  
 }
 
 
@@ -831,6 +829,9 @@ void truncateTempfiles(){
           Serial.println( uint32_t(512L * i));
           if(i == 0) {
             Serial.println("Zero length temp file encountered. Ignoring.");
+            if (!sd.remove(TMP_FILE_NAME)) {
+              error("Can't remove tmp file");
+            }
             return;
           }
           break;
