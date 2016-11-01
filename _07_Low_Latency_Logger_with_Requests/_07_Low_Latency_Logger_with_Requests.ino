@@ -864,30 +864,47 @@ void truncateTempfiles(){
     SdBaseFile tempFile;
  
     tempFile.open(TMP_FILE_NAME, O_RDWR);
-    for (uint32_t i = 0; i < FILE_BLOCK_COUNT; i++){
-      tempFile.seekSet(i*512L);
-      byte someBytes[4];
-      for (int j = 0;j<4;j++){
-        someBytes[j] = tempFile.read();
-      }
-      if ( someBytes[0]==0xFF & someBytes[1]==0xFF & someBytes[2]==0xFF & someBytes[3]==0xFF){
-          Serial.println("Trunating File.");
-          if (!tempFile.truncate(uint32_t(512L * i))){
-            error("Can't truncate file");
-          }
-          Serial.print("Truncated temp file to ");
-          Serial.println( uint32_t(512L * i));
-          if(i == 0) {
-            Serial.println("Zero length temp file encountered. Ignoring.");
-            if (!sd.remove(TMP_FILE_NAME)) {
-              error("Can't remove tmp file");
-            }
-            return;
-          }
-          break;
-      }
-  }
     
+    byte someBytes[4];
+    bool stillSearching = true;
+    uint32_t highIndex = FILE_BLOCK_COUNT;
+    uint32_t lowIndex = 0;
+    
+    tempFile.seekSet(0);
+    for (int j = 0;j<4;j++){
+      someBytes[j] = tempFile.read();
+    }
+    if (someBytes[0]==0xFF & someBytes[1]==0xFF & someBytes[2]==0xFF & someBytes[3]==0xFF){ // End is lower 
+      Serial.println("Zero length temp file encountered. Ignoring.");
+      if (!sd.remove(TMP_FILE_NAME)) {
+        error("Can't remove tmp file");
+      }
+      return;
+    }
+    
+    uint32_t fileIndex;
+    while (stillSearching){ // Use bisection search to find the end of the file.
+          fileIndex = (highIndex + lowIndex)/2;
+          tempFile.seekSet(fileIndex*512L);
+          for (int j = 0;j<4;j++){
+            someBytes[j] = tempFile.read();
+          }
+          
+          if (someBytes[0]==0xFF & someBytes[1]==0xFF & someBytes[2]==0xFF & someBytes[3]==0xFF){ // End is lower 
+            highIndex = highIndex - (highIndex - lowIndex)/2;
+          }
+          else{ // end is higher
+            lowIndex = lowIndex + (highIndex - lowIndex)/2;
+          }
+          if (highIndex - lowIndex < 2) stillSearching = false;
+    }
+    Serial.println("Trunating File.");
+    if (!tempFile.truncate(uint32_t(512L * fileIndex))){
+      error("Can't truncate file");
+    }
+    Serial.print("Truncated temp file to ");
+    Serial.println( uint32_t(512L * fileIndex));
+      
  
   // Find unused file name.
   if (BASE_NAME_SIZE > 5) {
@@ -928,4 +945,5 @@ void truncateTempfiles(){
   }
   digitalWrite(GREEN_LED_PIN,LOW);
 }
+
 
