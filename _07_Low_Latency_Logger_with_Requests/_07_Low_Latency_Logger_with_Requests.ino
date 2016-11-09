@@ -46,7 +46,7 @@
 
 // log file base name.  Must be five characters or less. Change this line for each upload
 // The first four characters should match the label on the cable.
-#define FILE_BASE_NAME "TU01_"
+#define FILE_BASE_NAME "TU03_"
 
 //included libraries 
 #include <SPI.h>
