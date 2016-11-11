@@ -46,7 +46,7 @@
 
 // log file base name.  Must be five characters or less. Change this line for each upload
 // The first four characters should match the label on the cable.
-#define FILE_BASE_NAME "TU03_"
+#define FILE_BASE_NAME "TU01_"
 
 //included libraries 
 #include <SPI.h>
@@ -274,6 +274,7 @@ uint32_t getBaudRate() {
   rxmsg.timeout = 100;
   digitalWrite(LED_BUILTIN,HIGH);
   while (1){
+    processSetTimeUtility();
     for(uint8_t i=0;i<numBaudRates;i++){
       uint32_t baudrate = baudRateList[i];
       Serial.print(F("Trying Baudrate of "));
@@ -587,7 +588,7 @@ void logData(uint32_t baudrate) {
 
   //wait for a CAN message to show up
   Serial.println(F("Waiting for CAN Messages..."));
-  while (CANbus.read(rxmsg) == 0);
+  while (CANbus.read(rxmsg) == 0) processSetTimeUtility(); //Set up the ability to set the realtime clock while waiting for a CAN message
   Serial.println(F("CAN Message Found."));
   Serial.println(F("Logging - type any character to stop"));
   // Wait for Serial Idle.
@@ -946,4 +947,38 @@ void truncateTempfiles(){
   digitalWrite(GREEN_LED_PIN,LOW);
 }
 
+elapsedMillis displayCounter;
+
+void processSetTimeUtility(){
+  if (Serial.available()) {
+    time_t t = processSyncMessage();
+    if (t != 0) {
+      Teensy3Clock.set(t); // set the RTC
+      setTime(t);
+    }
+  }
+  
+  if (displayCounter >=1000){
+    displayCounter = 0;
+    char timeStamp[35];
+    sprintf(timeStamp,"%04d-%02d-%02d %02d:%02d:%02d",year(),month(),day(),hour(),minute(),second());
+    Serial.println(timeStamp);
+  }  
+}
+
+/*  code to process time sync messages from the serial port   */
+#define TIME_HEADER  "T"   // Header tag for serial time sync message
+const uint32_t DEFAULT_TIME = 1357041600; // Jan 1 2013 
+
+uint32_t processSyncMessage() {
+  uint32_t pctime = 0L;
+  
+  if(Serial.find(TIME_HEADER)) {
+     pctime = Serial.parseInt();
+     if( pctime < DEFAULT_TIME) { // check the value is a valid time (greater than Jan 1 2013)
+       pctime = 0L; // return 0 to indicate that the time is not valid
+     }
+  }
+  return pctime;
+}
 
