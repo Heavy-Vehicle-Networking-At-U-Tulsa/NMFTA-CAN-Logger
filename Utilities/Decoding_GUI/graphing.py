@@ -1,0 +1,73 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Sep  2 07:52:53 2017
+
+@author: dailyadmin
+"""
+from PyQt5.QtWidgets import QSizePolicy
+from matplotlib.backends import qt_compat
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from matplotlib import rcParams
+import matplotlib.mlab as mlab
+
+class MyMplCanvas(FigureCanvas):
+    """Ultimately, this is a QWidget (as well as a FigureCanvasAgg, etc.)."""
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        self.fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = self.fig.add_subplot(111)
+        
+        FigureCanvas.__init__(self, self.fig)
+        self.setParent(parent)
+
+        FigureCanvas.setSizePolicy(self,
+                                   QSizePolicy.Expanding,
+                                   QSizePolicy.Expanding)
+        FigureCanvas.updateGeometry(self)
+        FigureCanvas.mpl_connect(self,'button_press_event', self.export)
+        
+    def export(self,event):
+        """This is a utility that will prodxuce a pdf of the graph"""
+        filename = "ExportedGraph.pdf"
+        self.fig.savefig(filename)
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setText("Saved a copy of the graphics window to {}".format(filename))
+        #msg.setInformativeText("This is additional information")
+        msg.setWindowTitle("Saved PDF File")
+        msg.setDetailedText("The full path of the file is \n{}".format(os.path.abspath(os.getcwd())))
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.setWindowModality(Qt.ApplicationModal)
+        msg.exec_()
+        print("Exported PDF file")
+        
+class MyDynamicMplCanvas(MyMplCanvas):
+    """A canvas that updates itself frequently with a new plot."""
+    def __init__(self, *args, **kwargs):
+        MyMplCanvas.__init__(self, *args, **kwargs)
+        self.axes.set_xlabel("X Label")
+        self.axes.set_ylabel("Y Label")
+        self.axes.set_title("Title")
+             
+    def plot_histogram(self,data_array,data_label="Temperature",
+                       title="Probability Density Function Plots",bins=50):
+        self.axes.cla() #Clear axes
+        self.axes.hist(data_array,bins=bins,
+                       normed=True,label="Emperical",
+                       edgecolor='b',color='y')
+        self.axes.set_xlabel(data_label)
+        self.axes.set_ylabel("Estimated Prob. Density Funct.")
+        self.axes.set_title(title)
+        self.axes.legend(shadow=True)
+        self.draw()
+        print("Finished Drawing Normalized Histogram.")
+          
+    def plot_normal(self,mu,sigma):
+        xmin,xmax = self.axes.get_xlim()
+        x = np.linspace(mu-3*sigma,mu+3*sigma, 100)
+        y = mlab.normpdf(x, mu, sigma)
+        self.axes.plot(x,y,label="Normal")
+        self.axes.legend(shadow=True)
+        self.draw()
+        print("Finished Drawing Normal Distribution.")
+
