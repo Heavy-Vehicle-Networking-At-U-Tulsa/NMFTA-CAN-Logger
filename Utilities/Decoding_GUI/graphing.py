@@ -4,12 +4,16 @@ Created on Sat Sep  2 07:52:53 2017
 
 @author: dailyadmin
 """
-from PyQt5.QtWidgets import QSizePolicy
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QSizePolicy,
+                             QMessageBox,
+                             QFileDialog)
 from matplotlib.backends import qt_compat
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib import rcParams
 import matplotlib.mlab as mlab
+import os
 
 class MyMplCanvas(FigureCanvas):
     """Ultimately, this is a QWidget (as well as a FigureCanvasAgg, etc.)."""
@@ -29,17 +33,26 @@ class MyMplCanvas(FigureCanvas):
     def export(self,event):
         """This is a utility that will prodxuce a pdf of the graph"""
         filename = "ExportedGraph.pdf"
-        self.fig.savefig(filename)
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Information)
-        msg.setText("Saved a copy of the graphics window to {}".format(filename))
-        #msg.setInformativeText("This is additional information")
-        msg.setWindowTitle("Saved PDF File")
-        msg.setDetailedText("The full path of the file is \n{}".format(os.path.abspath(os.getcwd())))
-        msg.setStandardButtons(QMessageBox.Ok)
-        msg.setWindowModality(Qt.ApplicationModal)
-        msg.exec_()
-        print("Exported PDF file")
+        options = QFileDialog.Options()
+        options |= QFileDialog.Detail
+        filename,_ = QFileDialog.getSaveFileName(self,
+                                        "Save Plot Graphics File", 
+                                        #"{}".format(self.home_directory),
+                                        os.getcwd(),
+                                        "PDF Files (*.pdf);;PNG Graphics (*.png);;All Files (*)",
+                                        options=options)
+        print("Saving {}".format(filename))
+        if filename:
+            self.fig.savefig(filename)
+##            msg = QMessageBox()
+##            msg.setIcon(QMessageBox.Information)
+##            msg.setText("Saved a copy of the graphics window to {}".format(filename))
+##            msg.setWindowTitle("Saved PDF File")
+##            msg.setDetailedText("The full path of the file is \n{}".format(os.path.abspath(os.getcwd())))
+##            msg.setStandardButtons(QMessageBox.Ok)
+##            msg.setWindowModality(Qt.ApplicationModal)
+##            msg.exec_()
+##            print("Exported PDF file")
         
 class MyDynamicMplCanvas(MyMplCanvas):
     """A canvas that updates itself frequently with a new plot."""

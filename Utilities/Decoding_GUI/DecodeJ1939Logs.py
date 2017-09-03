@@ -157,10 +157,22 @@ class CANDecoderMainWindow(QMainWindow):
         #set the layout so labels are at the top
         self.control_box_layout.setAlignment(Qt.AlignTop)
         
-        label = QLabel("Plot Area")
+        label = QLabel("Select a CAN ID to see and plot the available Suspect Pameter Numbers.")
         self.control_box_layout.addWidget(label)
         
-        
+        #Setup the area for plotting SPNs
+        self.info_scroll_area = QScrollArea()
+        self.info_scroll_area.setWidgetResizable(True)
+        #Create the container widget
+        self.info_box = QGroupBox("Suspect Paramter Number (SPN) Information")
+        #put the container widget into the scroll area
+        self.info_scroll_area.setWidget(self.info_box)
+        #create a layout strategy for the container 
+        self.info_box_layout = QVBoxLayout()
+        #assign the layout strategy to the container
+        self.info_box.setLayout(self.info_box_layout)
+        #set the layout so labels are at the top
+        self.info_box_layout.setAlignment(Qt.AlignTop)
         
        
         
@@ -169,10 +181,11 @@ class CANDecoderMainWindow(QMainWindow):
 
         #Now we can set all the previously defined boxes into the main window
         self.grid_layout = QGridLayout(self.main_widget)
-        self.grid_layout.addWidget(can_id_box,0,0) 
+        self.grid_layout.addWidget(can_id_box,0,0,1,2) 
         self.grid_layout.addWidget(self.control_scroll_area,1,0)
-        self.grid_layout.addWidget(self.graph_canvas,1,1) 
-        self.grid_layout.addWidget(table_box,0,1)
+        self.grid_layout.addWidget(self.info_scroll_area,1,1)
+        self.grid_layout.addWidget(self.graph_canvas,1,2) 
+        self.grid_layout.addWidget(table_box,0,2)
         self.grid_layout.setRowStretch(0, 3)
         
         self.main_widget.setLayout(self.grid_layout)
@@ -180,7 +193,7 @@ class CANDecoderMainWindow(QMainWindow):
         
         self.setWindowTitle(program_title)
         self.show()
-        
+        self.load_table("example.bin")
         
     def show_about_dialog(self):
         msg = QMessageBox()
@@ -374,65 +387,81 @@ class CANDecoderMainWindow(QMainWindow):
     
     def plot_SPN(self,spn,id_key):
         if self.spn_plot_checkbox[spn].isChecked():
-            print("Plot SPN {}".format(spn))
+            #look up items in the database
+            name = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Name"]
+            units = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Units"]
+            spn_start = self.j1939db["J1939SPNdb"]["{}".format(spn)]["StartBit"]
+            spn_end = self.j1939db["J1939SPNdb"]["{}".format(spn)]["EndBit"]                  
             spn_length = self.j1939db["J1939SPNdb"]["{}".format(spn)]["SPNLength"]
+            scale = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Resolution"]
+            offset = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Offset"]
+            
             if spn_length <= 8:
                 fmt = "B"
-            elif spn_length == 16:
-                fmt = "<H"
-            elif spn_length == 32:
+            elif spn_length <= 16:
+                fmt = ">H"
+            elif spn_length <= 32:
                 fmt = ">L"
+            elif spn_length <= 64:
+                fmt = ">Q"
             else:
                 self.statusBar().showMessage("Not a plottable SPN.")  
                 return
 
-            spn_start = self.j1939db["J1939SPNdb"]["{}".format(spn)]["StartBit"]
-            if spn_start >= 32:
-                second_half = True
-                shift = spn_start - 32
-            else:
-                second_half = False
-                shift = spn_start
-                
-            #start_slice = int(spn_start/8)
-            #end_slice = start_slice + int(spn_length/8)
-            #remainder = spn_start%8
+            shift = spn_start
             mask = 0
             for m in range(spn_length):
-                mask += (1 << (m+spn_start))
+                mask += (1 << ( m + spn_start)) #This is actually a reversed mask.
+            #print("Mask: 0x{:016X}".format(mask)) 
+            if scale <= 0:
+                scale = 1
+                
+            self.info_box_layout.addWidget(QLabel("SPN {}: {}".format(spn,name)))
+            self.info_box_layout.addWidget(QLabel("  Resolution: {}, Units: {}".format(scale,units)))
+            self.info_box_layout.addWidget(QLabel("  Offset: {} {}, Length: {} bits".format(offset,units,spn_length)))
+            self.info_box_layout.addWidget(QLabel("  Start Bit: {}, End Bit: {}".format(spn_start,spn_end)))
+
+            display_mask_bytes = struct.pack(">Q",mask)
+            reversed_bits=b''
+            for b in display_mask_bytes:
+                reversed_bits += struct.pack("B",(int('{:08b}'.format(b)[::-1], 2)))
+            display_mask = struct.unpack("<Q",reversed_bits)[0] #Switch the byte order of the mask
             
-            scale = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Resolution"]
-            offset = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Offset"]
-             
+
+            self.info_box_layout.addWidget(QLabel("  Mask: 0x{:016X}".format(display_mask)))                              
             
             times = []
             values = []
             for entry in self.ID_dict[id_key]["Data"]:
                 #print(entry)
                 times.append(entry[0])
-                #print(entry[1])
-                if second_half:
-                    decimal_value = struct.unpack("<L",entry[1][4:8])[0] & mask
-                else:
-                    decimal_value = struct.unpack("<L",entry[1][0:4])[0] & mask
-                #print(decimal_value)
-                spn_value = ((decimal_value ) >> shift)*scale + offset
+                #print("Entry: " + "".join("{:02X} ".format(d) for d in entry[1]))
+                decimal_value = struct.unpack("<Q",entry[1])[0] & mask #the < takes care of reverse byte orders
+                #print("masked decimal_value: {:08X}".format(decimal_value ))
+                shifted_decimal = decimal_value >> shift
+                #print("shifted_decimal: {:08X}".format(shifted_decimal))
+                spn_value = shifted_decimal * scale + offset
+                #print("SPN value: {}\n".format(spn_value))
                 values.append(spn_value)
+            #Plot the data
             self.graph_canvas.plot_data(times,values,"SPN {}".format(spn))
-            self.spn_plot_checkbox[spn].setChecked(True)
-            name = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Name"]
-            units = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Units"]
             self.graph_canvas.title("")
             self.graph_canvas.xlabel("Time (sec)")
             self.graph_canvas.ylabel("{} ({})".format(name,units))
             
+            #Disable the button to show it's been plotted
+            while self.spn_plot_checkbox[spn].isChecked() == False:
+                self.spn_plot_checkbox[spn].setChecked(True)
             self.spn_plot_checkbox[spn].setEnabled(False)
-            #self.show()
             
             
     def clear_plots(self):
         self.graph_canvas.clear()
-        
+        #Clear the information box
+        while self.info_box_layout.count():
+            item = self.info_box_layout.takeAt(0)
+            item.widget().deleteLater()
+
         for spn in sorted(self.spn_list):
             self.spn_plot_checkbox[spn].setEnabled(True)
             self.spn_plot_checkbox[spn].setChecked(False)
