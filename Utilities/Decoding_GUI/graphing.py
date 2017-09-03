@@ -45,7 +45,7 @@ class MyDynamicMplCanvas(MyMplCanvas):
     """A canvas that updates itself frequently with a new plot."""
     def __init__(self, *args, **kwargs):
         MyMplCanvas.__init__(self, *args, **kwargs)
-        self.axes.set_xlabel("X Label")
+        self.axes.set_xlabel("Time(s)")
         self.axes.set_ylabel("Y Label")
         self.axes.set_title("Title")
              
@@ -70,4 +70,20 @@ class MyDynamicMplCanvas(MyMplCanvas):
         self.axes.legend(shadow=True)
         self.draw()
         print("Finished Drawing Normal Distribution.")
-
+    def plot_data(self,x,y,legend_label):
+        self.axes.plot(x,y,label=legend_label)
+        self.axes.legend(shadow=True)
+        self.draw()
+    def clear(self):
+        self.axes.cla()
+        self.draw()
+    def title(self,title_string="Title"):
+        self.axes.set_title(title_string)
+        self.draw()
+    def xlabel(self,xlabel_string="Time (s)"):
+        self.axes.set_xlabel(xlabel_string)
+        self.draw()
+    def ylabel(self,ylabel_string="Units"):
+        self.axes.set_ylabel(ylabel_string)
+        self.draw()
+    

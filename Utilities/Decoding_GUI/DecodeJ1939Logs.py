@@ -261,6 +261,7 @@ class CANDecoderMainWindow(QMainWindow):
                     message["DLC"] = (timeMicrosecondsAndDLC & 0xFF000000) >> 24
                     message["Logger Micros"] = struct.unpack("<L",record[4:8])[0]
                     message["ID"] = struct.unpack("<L",record[12:16])[0]
+                    message["Bytes"] = record[16:24]
                     message["Payload"] = struct.unpack("BBBBBBBB",record[16:24])
                     message["SA"] = (0x000000FF & message["ID"])
                     message["PF"] = (0x00FF0000 & message["ID"]) >> 16
@@ -282,7 +283,7 @@ class CANDecoderMainWindow(QMainWindow):
                     if message["ID"] in self.ID_dict.keys():
                         #Count and append to the existing field
                         self.ID_dict[message["ID"]]["Count"] += 1
-                        self.ID_dict[message["ID"]]["Data"].append((message["Rel Time"],message["Payload"]))
+                        self.ID_dict[message["ID"]]["Data"].append((message["Rel Time"],message["Bytes"]))
                         self.ID_dict[message["ID"]]["EndTime"]=message["Real Time"]
                     else:
                         #initialize the data field
@@ -294,7 +295,7 @@ class CANDecoderMainWindow(QMainWindow):
                                                        "PGN Name":"",
                                                        "SA":message["SA"],
                                                        "DA":message["DA"],
-                                                       "Data":[ (message["Rel Time"],message["Payload"]) ]}
+                                                       "Data":[ (message["Rel Time"],message["Bytes"]) ]}
         self.load_can_id_table()
         
     def load_can_id_table(self):
@@ -371,13 +372,76 @@ class CANDecoderMainWindow(QMainWindow):
         self.can_id_table.itemSelectionChanged.connect(self.create_spn_plot_buttons)
         self.can_id_table.resizeColumnsToContents()
     
-    def plot_SPN(self,SPN="84"):
-        print("Plot SPN {}".format(SPN))
-    
-    def create_spn_plot_buttons(self):
+    def plot_SPN(self,spn,id_key):
+        if self.spn_plot_checkbox[spn].isChecked():
+            print("Plot SPN {}".format(spn))
+            spn_length = self.j1939db["J1939SPNdb"]["{}".format(spn)]["SPNLength"]
+            if spn_length <= 8:
+                fmt = "B"
+            elif spn_length == 16:
+                fmt = "<H"
+            elif spn_length == 32:
+                fmt = ">L"
+            else:
+                self.statusBar().showMessage("Not a plottable SPN.")  
+                return
 
+            spn_start = self.j1939db["J1939SPNdb"]["{}".format(spn)]["StartBit"]
+            if spn_start >= 32:
+                second_half = True
+                shift = spn_start - 32
+            else:
+                second_half = False
+                shift = spn_start
+                
+            #start_slice = int(spn_start/8)
+            #end_slice = start_slice + int(spn_length/8)
+            #remainder = spn_start%8
+            mask = 0
+            for m in range(spn_length):
+                mask += (1 << (m+spn_start))
+            
+            scale = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Resolution"]
+            offset = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Offset"]
+             
+            
+            times = []
+            values = []
+            for entry in self.ID_dict[id_key]["Data"]:
+                #print(entry)
+                times.append(entry[0])
+                #print(entry[1])
+                if second_half:
+                    decimal_value = struct.unpack("<L",entry[1][4:8])[0] & mask
+                else:
+                    decimal_value = struct.unpack("<L",entry[1][0:4])[0] & mask
+                #print(decimal_value)
+                spn_value = ((decimal_value ) >> shift)*scale + offset
+                values.append(spn_value)
+            self.graph_canvas.plot_data(times,values,"SPN {}".format(spn))
+            self.spn_plot_checkbox[spn].setChecked(True)
+            name = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Name"]
+            units = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Units"]
+            self.graph_canvas.title("")
+            self.graph_canvas.xlabel("Time (sec)")
+            self.graph_canvas.ylabel("{} ({})".format(name,units))
+            
+            self.spn_plot_checkbox[spn].setEnabled(False)
+            #self.show()
+            
+            
+    def clear_plots(self):
+        self.graph_canvas.clear()
         
-        
+        for spn in sorted(self.spn_list):
+            self.spn_plot_checkbox[spn].setEnabled(True)
+            self.spn_plot_checkbox[spn].setChecked(False)
+            
+    def create_spn_plot_buttons(self):
+        try:
+            self.clear_plots()
+        except:
+            pass
         #print("getting selection")
         row_indicies = self.can_id_table.selectionModel().selectedRows()
         self.id_selection_list=[]
@@ -391,19 +455,26 @@ class CANDecoderMainWindow(QMainWindow):
         while self.control_box_layout.count():
             item = self.control_box_layout.takeAt(0)
             item.widget().deleteLater()
-        spn_list=[]
-        spn_plot_checkbox={}
+        #add a clear plot button
+        clear_button = QPushButton("Clear and Reset Plot",self)
+        clear_button.clicked.connect(self.clear_plots)
+        self.control_box_layout.addWidget(clear_button)
+    
+        self.spn_list=[]
+        
+        self.spn_plot_checkbox={}
         for id_text in self.id_selection_list:
             #we need to look up the PGN that was put into the ID_dict. The key was the ID as an integer
-            pgn = self.ID_dict[int(id_text,16)]["PGN"]
+            id_key=int(id_text,16)
+            pgn = self.ID_dict[id_key]["PGN"]
             #print("PGN: {}".format(pgn))
             for spn in sorted(self.j1939db["J1939PGNdb"]["{}".format(pgn)]["SPNs"]):
                 spn_name = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Name"]
-                spn_list.append(spn)
-                spn_plot_checkbox[spn]= QCheckBox("Plot SPN {}: {}".format(spn,spn_name),self)
-                spn_plot_checkbox[spn].stateChanged.connect(partial(self.plot_SPN,spn)) #We need to pass the SPN to the plotter
-        for spn in sorted(spn_list):
-            self.control_box_layout.addWidget(spn_plot_checkbox[spn])
+                self.spn_list.append(spn)
+                self.spn_plot_checkbox[spn]= QCheckBox("Plot SPN {}: {}".format(spn,spn_name),self)
+                self.spn_plot_checkbox[spn].stateChanged.connect(partial(self.plot_SPN,spn,id_key)) #We need to pass the SPN to the plotter
+        for spn in sorted(self.spn_list):
+            self.control_box_layout.addWidget(self.spn_plot_checkbox[spn])
 
         #set newly updated widget to display in the scroll box
         self.control_scroll_area.setWidget(self.control_box)
