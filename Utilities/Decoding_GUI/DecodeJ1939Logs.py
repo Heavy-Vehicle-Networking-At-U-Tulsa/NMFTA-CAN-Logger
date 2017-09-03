@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (QMainWindow,
                              QTableWidget,
                              QTableView,
                              QTableWidgetItem,
+                             QScrollArea,
                              QAbstractScrollArea,
                              QAbstractItemView,
                              QSizePolicy,
@@ -35,6 +36,9 @@ import numpy as np
 import os
 import struct
 import time
+import json
+from functools import partial
+
 from graphing import * #this is a custom class file for graphics
 
 rcParams.update({'figure.autolayout': True}) #Depends of matplotlib from graphing
@@ -77,7 +81,14 @@ class CANDecoderMainWindow(QMainWindow):
         exit_action.setStatusTip('Exit application')
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-        
+
+        #Data Menu Items
+        data_menu = menubar.addMenu('&Data')
+        load_action = QAction(QIcon(r'icons8_Data_Sheet_48px.png'), '&Load Selected IDs', self)        
+        load_action.setStatusTip('Filter selected message IDs into the Data Table')
+        load_action.triggered.connect(self.load_message_table)
+        data_menu.addAction(load_action)
+       
         #Help Menu Items
         help_menu = menubar.addMenu('&Help')
         about_action = QAction(QIcon(r'icons8_Info_40px.png'), '&About', self)        
@@ -91,28 +102,21 @@ class CANDecoderMainWindow(QMainWindow):
         self.main_toolbar.addAction(open_file)
         self.main_toolbar.addAction(exit_action)
         self.main_toolbar.addAction(about_action)
-        
+
+        self.data_toolbar = self.addToolBar("Data")
+        self.data_toolbar.addAction(load_action)
         
         self.main_widget = QWidget()
         
-        self.setGeometry(200,200,1600,900)
-
-        self.load_button = QPushButton('Load Data',self)
-        self.load_button.clicked.connect(self.load_message_table)
-     
-        self.mean_label = QLabel("Mean: Not Computed Yet",self)
-        self.std_label = QLabel("Std Dev: Not Computed Yet",self)
+        self.setGeometry(100,100,1600,900)
         
         #Set up a Table to display CAN Messages data
         self.data_table = QTableWidget()
         #self.data_table.itemSelectionChanged.connect(self.compute_stats)
-        
-
+  
         #Set up a table to display CAN ID data
         self.can_id_table = QTableWidget()
-        
-        
-        
+           
         self.main_widget = QWidget(self)
         self.graph_canvas = MyDynamicMplCanvas(self.main_widget, width=5, height=4, dpi=100)
         
@@ -124,7 +128,6 @@ class CANDecoderMainWindow(QMainWindow):
         #Create a layout for that box using the vertical
         table_box_layout = QVBoxLayout()
         #Add the widgets into the layout
-        table_box_layout.addWidget(self.load_button)
         table_box_layout.addWidget(self.data_table)
         #setup the layout to be displayed in the box
         table_box.setLayout(table_box_layout)
@@ -137,47 +140,45 @@ class CANDecoderMainWindow(QMainWindow):
         can_id_box_layout.addWidget(self.can_id_table)
         #setup the layout to be displayed in the box
         can_id_box.setLayout(can_id_box_layout)
-        
-        #repeat the box layout for Statistics
-        stats_box = QGroupBox("Summary Statistics")
-        stats_box_layout = QVBoxLayout()
-        stats_box_layout.addWidget(self.mean_label)
-        stats_box_layout.addWidget(self.std_label)
-        stats_box.setLayout(stats_box_layout)
 
+        #Setup the area for plotting SPNs
+        self.control_scroll_area = QScrollArea()
+        #self.control_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        #self.control_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.control_scroll_area.setWidgetResizable(True)
+        #Create the container widget
+        self.control_box = QWidget()
+        #put the container widget into the scroll area
+        self.control_scroll_area.setWidget(self.control_box)
+        #create a layout strategy for the container 
+        self.control_box_layout = QVBoxLayout()
+        #assign the layout strategy to the container
+        self.control_box.setLayout(self.control_box_layout)
+        #set the layout so labels are at the top
+        self.control_box_layout.setAlignment(Qt.AlignTop)
+        
+        label = QLabel("Plot Area")
+        self.control_box_layout.addWidget(label)
+        
+        
+        
+       
+        
         #Ignore the box creation for now, since the graph box would just have 1 widget
-        #graph_box = QGroupBox("Data and Probability Graph")
-        
-        #Create some distribution options
-        #Start with creating a check button.
-        self.normal_checkbox = QCheckBox('Normal Distribution',self)
-        # We want to run the plotting routine for the distribution, but 
-        # we need to know the statistical values, so we'll calculate statistics
-        # first.
-        self.normal_checkbox.stateChanged.connect(self.compute_stats)
-        
-        #Repeat for additional distributions.
-        self.log_normal_checkbox = QCheckBox('Log-Normal Distribution',self)
-        
-        distribution_box = QGroupBox("Distribution Functions")
-        distribution_box_layout= QVBoxLayout()
-        distribution_box_layout.addWidget(self.normal_checkbox)
-        distribution_box_layout.addWidget(self.log_normal_checkbox)
-        distribution_box.setLayout(distribution_box_layout)
+        #graph_box = QGroupBox("Plots")
 
         #Now we can set all the previously defined boxes into the main window
         self.grid_layout = QGridLayout(self.main_widget)
         self.grid_layout.addWidget(can_id_box,0,0) 
-        self.grid_layout.addWidget(stats_box,1,1)
-        self.grid_layout.addWidget(self.graph_canvas,1,0) 
+        self.grid_layout.addWidget(self.control_scroll_area,1,0)
+        self.grid_layout.addWidget(self.graph_canvas,1,1) 
         self.grid_layout.addWidget(table_box,0,1)
+        self.grid_layout.setRowStretch(0, 3)
         
         self.main_widget.setLayout(self.grid_layout)
         self.setCentralWidget(self.main_widget)
         
         self.setWindowTitle(program_title)
-        #self.activateWindow()
-        #self.raise_()
         self.show()
         
         
@@ -297,8 +298,14 @@ class CANDecoderMainWindow(QMainWindow):
         self.load_can_id_table()
         
     def load_can_id_table(self):
+        #load the J1939 Database
+        with open("J1939db.json",'r') as j1939_file:
+            self.j1939db = json.load(j1939_file)
+        pgn_names = self.j1939db["J1939PGNdb"]
+        source_address_names = self.j1939db["J1939SATabledb"]
+        
         #Set the headers
-        self.can_id_table_columns = ["Hex CAN ID", "PGN","DA", "SA","Count","Period (ms)", "Freq. (Hz)",]
+        self.can_id_table_columns = ["Hex CAN ID", "PGN","Acronym","DA","Destination","SA","Source","Count","Period (ms)", "Freq. (Hz)"]
         self.can_id_table.setColumnCount(len(self.can_id_table_columns))
         self.can_id_table.setHorizontalHeaderLabels(self.can_id_table_columns)
         self.can_id_table.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
@@ -307,12 +314,24 @@ class CANDecoderMainWindow(QMainWindow):
         self.can_id_table.setRowCount(len(self.ID_dict))
         row = 0
         for key,item in sorted(self.ID_dict.items()):
-            #print(key)
+            #print(item["PGN"])
+            
             if item["DA"] == 255:
-                DA_entry = ""
+                DA_entry = "(255)"
+                DA_name = "All"
             else:
-                DA_entry = "{}".format(item["DA"])
-
+                DA_entry = "{:3d}".format(item["DA"])
+                try:
+                    DA_name = source_address_names[DA_entry.strip()] #Clean whitespace off the string
+                except KeyError:
+                    DA_name = "Unknown"
+                    
+            SA_entry = "{:3d}".format(item["SA"])
+            try:
+                SA_name = source_address_names[SA_entry.strip()] #Clean whitespace off the string
+            except KeyError:
+                SA_name = "Unknown"
+                
             period = 1000*(item["EndTime"] - item["StartTime"])/item["Count"]
             if period > 0:
                 frequency = 1000/period
@@ -320,59 +339,103 @@ class CANDecoderMainWindow(QMainWindow):
                 frequency = 0
             self.ID_dict[key]["Frequency"] = frequency
             self.ID_dict[key]["Period"] = period #in Milliseconds
+
+            try:
+                acronym = pgn_names["{}".format(item["PGN"])]["Label"]
+            except KeyError:
+                acronym = "Unknown"
+            SPNs = pgn_names["{}".format(item["PGN"])]["SPNs"]
             
             row_values = ["{:08X}".format(key),
-                          "{:8d}".format(item["PGN"]), 
+                          "{:8d}".format(item["PGN"]),
+                          acronym,
                           DA_entry,
-                          "{:3d}".format(item["SA"]),
+                          DA_name,
+                          SA_entry,
+                          SA_name,
                           "{:12d}".format(item["Count"]),
                           "{:5d}".format(int(period)),
-                          "{:9.3f}".format(frequency)]
+                          "{:9.3f}".format(frequency),
+                          ]
             for col in range(self.can_id_table.columnCount()):
                 entry = QTableWidgetItem(row_values[col])
+                entry.setFlags(entry.flags() & ~Qt.ItemIsEditable)
                 self.can_id_table.setItem(row,col,entry)
             row += 1
             self.statusBar().showMessage("Found {} unique IDs.".format(row))            
             self.data_table.resizeColumnsToContents()
-
+        self.id_selection_list=[] #create an empty list
         self.can_id_table.setSortingEnabled(True)
         self.can_id_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        #self.can_id_table.doubleClicked.connect(self.load_message_table)
+        self.can_id_table.doubleClicked.connect(self.load_message_table)
+        self.can_id_table.itemSelectionChanged.connect(self.create_spn_plot_buttons)
         self.can_id_table.resizeColumnsToContents()
+    
+    def plot_SPN(self,SPN="84"):
+        print("Plot SPN {}".format(SPN))
+    
+    def create_spn_plot_buttons(self):
+
+        
+        
+        #print("getting selection")
+        row_indicies = self.can_id_table.selectionModel().selectedRows()
+        self.id_selection_list=[]
+        for index in row_indicies:
+            #print(index.row(),end=' ')
+            id_item = self.can_id_table.item(index.row(), 0)
+            #print(id_item.text())
+            self.id_selection_list.append(id_item.text())
+
+        # clear a layout and delete all widgets
+        while self.control_box_layout.count():
+            item = self.control_box_layout.takeAt(0)
+            item.widget().deleteLater()
+        spn_list=[]
+        spn_plot_checkbox={}
+        for id_text in self.id_selection_list:
+            #we need to look up the PGN that was put into the ID_dict. The key was the ID as an integer
+            pgn = self.ID_dict[int(id_text,16)]["PGN"]
+            #print("PGN: {}".format(pgn))
+            for spn in sorted(self.j1939db["J1939PGNdb"]["{}".format(pgn)]["SPNs"]):
+                spn_name = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Name"]
+                spn_list.append(spn)
+                spn_plot_checkbox[spn]= QCheckBox("Plot SPN {}: {}".format(spn,spn_name),self)
+                spn_plot_checkbox[spn].stateChanged.connect(partial(self.plot_SPN,spn)) #We need to pass the SPN to the plotter
+        for spn in sorted(spn_list):
+            self.control_box_layout.addWidget(spn_plot_checkbox[spn])
+
+        #set newly updated widget to display in the scroll box
+        self.control_scroll_area.setWidget(self.control_box)
         
     def load_message_table(self):
 
-        #print("getting selection")
-        item_list=[]
-        row_indicies = self.can_id_table.selectionModel().selectedRows()
-        print(row_indicies)
-        id_selection_list=[]
-        for index in row_indicies:
-            print(index.row(),end=' ')
-            id_item = self.can_id_table.item(index.row(), 0)
-            print(id_item.text())
-            id_selection_list.append(id_item.text())
-        #print(id_selection_list)
+        if len(self.id_selection_list) == 0:
+            #don't do anything if there's nothing selected.
+            return
         
+        #Do some preliminary Table operations
         self.data_table.clear()
         self.data_table.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
-        
+        self.data_table.setSortingEnabled(False)
         self.data_table.setRowCount(len(self.message_list))            
 
         self.loading_table_progress = QProgressDialog(self)
         self.loading_table_progress.setMinimumWidth(300)
         self.loading_table_progress.setWindowTitle("Filling Table with Data")
-        self.loading_table_progress.setMinimumDuration(4)
+        self.loading_table_progress.setMinimumDuration(3000)
         self.loading_table_progress.setMaximum(len(self.message_list)-1)
         self.loading_table_progress.setWindowModality(Qt.ApplicationModal)
 
-        self.data_table.setSortingEnabled(False)
+        
         #Set the headers
         data_table_columns = ["Real Time", "Rel. Time[s]","Micros", "CAN ID", "PGN","DA","SA","DLC"]
         for i in range(8):
            data_table_columns.append("B{}".format(i))
         self.data_table.setColumnCount(len(data_table_columns))
         self.data_table.setHorizontalHeaderLabels(data_table_columns)
+        self.data_table.resizeColumnsToContents()
+        
         #Load the data
         filled_rows = 0
         for row in range(len(self.message_list)):
@@ -381,7 +444,7 @@ class CANDecoderMainWindow(QMainWindow):
                 break
             #self.data_table.insertRow(row) #this is slow
             id_text = "{:08X}".format(self.message_list[row]["ID"])
-            if id_text in id_selection_list:
+            if id_text in self.id_selection_list: #This list was created in a different function
                 row_values = [time.strftime("%Y-%m-%d %H:%M:%S",
                                             time.localtime(self.message_list[row]["Real Time"]))+
                                               "{:.6f}".format(self.message_list[row]["Real Time"]%1)[1:],
