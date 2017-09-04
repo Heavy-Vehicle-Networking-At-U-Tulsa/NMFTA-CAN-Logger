@@ -55,6 +55,7 @@ class CANDecoderMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.home_directory = os.getcwd()
+        self.setGeometry(100,100,1615,900)
         # Upon startup, run a user interface routine
         self.init_ui()
         #self.showMaximized()
@@ -108,7 +109,7 @@ class CANDecoderMainWindow(QMainWindow):
         
         self.main_widget = QWidget()
         
-        self.setGeometry(100,100,1600,900)
+        
         
         #Set up a Table to display CAN Messages data
         self.data_table = QTableWidget()
@@ -319,7 +320,7 @@ class CANDecoderMainWindow(QMainWindow):
         source_address_names = self.j1939db["J1939SATabledb"]
         
         #Set the headers
-        self.can_id_table_columns = ["Hex CAN ID", "PGN","Acronym","DA","Destination","SA","Source","Count","Period (ms)", "Freq. (Hz)"]
+        self.can_id_table_columns = ["Hex CAN ID", "PGN","Acronym","DA","SA","Source","Count","Period (ms)", "Freq. (Hz)"]
         self.can_id_table.setColumnCount(len(self.can_id_table_columns))
         self.can_id_table.setHorizontalHeaderLabels(self.can_id_table_columns)
         self.can_id_table.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
@@ -364,7 +365,7 @@ class CANDecoderMainWindow(QMainWindow):
                           "{:8d}".format(item["PGN"]),
                           acronym,
                           DA_entry,
-                          DA_name,
+                          #DA_name,
                           SA_entry,
                           SA_name,
                           "{:12d}".format(item["Count"]),
@@ -378,13 +379,18 @@ class CANDecoderMainWindow(QMainWindow):
             row += 1
             self.statusBar().showMessage("Found {} unique IDs.".format(row))            
             self.data_table.resizeColumnsToContents()
+
         self.id_selection_list=[] #create an empty list
         self.can_id_table.setSortingEnabled(True)
         self.can_id_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.can_id_table.doubleClicked.connect(self.load_message_table)
         self.can_id_table.itemSelectionChanged.connect(self.create_spn_plot_buttons)
         self.can_id_table.resizeColumnsToContents()
-    
+        self.find_transport_pgns()
+        
+   
+        
+        
     def plot_SPN(self,spn,id_key):
         if self.spn_plot_checkbox[spn].isChecked():
             #look up items in the database
@@ -398,20 +404,24 @@ class CANDecoderMainWindow(QMainWindow):
             
             if spn_length <= 8:
                 fmt = "B"
+                rev_fmt = "B"
             elif spn_length <= 16:
                 fmt = ">H"
+                rev_fmt = "<H"
             elif spn_length <= 32:
                 fmt = ">L"
+                rev_fmt = "<L"
             elif spn_length <= 64:
                 fmt = ">Q"
+                rev_fmt = "<Q"
             else:
                 self.statusBar().showMessage("Not a plottable SPN.")  
                 return
 
-            shift = spn_start
+            shift = 64 - spn_start - spn_length
             mask = 0
             for m in range(spn_length):
-                mask += (1 << ( m + spn_start)) #This is actually a reversed mask.
+                mask += 1 << (63 - m - spn_start) 
             #print("Mask: 0x{:016X}".format(mask)) 
             if scale <= 0:
                 scale = 1
@@ -420,15 +430,7 @@ class CANDecoderMainWindow(QMainWindow):
             self.info_box_layout.addWidget(QLabel("  Resolution: {}, Units: {}".format(scale,units)))
             self.info_box_layout.addWidget(QLabel("  Offset: {} {}, Length: {} bits".format(offset,units,spn_length)))
             self.info_box_layout.addWidget(QLabel("  Start Bit: {}, End Bit: {}".format(spn_start,spn_end)))
-
-            display_mask_bytes = struct.pack(">Q",mask)
-            reversed_bits=b''
-            for b in display_mask_bytes:
-                reversed_bits += struct.pack("B",(int('{:08b}'.format(b)[::-1], 2)))
-            display_mask = struct.unpack("<Q",reversed_bits)[0] #Switch the byte order of the mask
-            
-
-            self.info_box_layout.addWidget(QLabel("  Mask: 0x{:016X}".format(display_mask)))                              
+            self.info_box_layout.addWidget(QLabel("  Mask: 0x{:016X}".format(mask)))                              
             
             times = []
             values = []
@@ -436,11 +438,14 @@ class CANDecoderMainWindow(QMainWindow):
                 #print(entry)
                 times.append(entry[0])
                 #print("Entry: " + "".join("{:02X} ".format(d) for d in entry[1]))
-                decimal_value = struct.unpack("<Q",entry[1])[0] & mask #the < takes care of reverse byte orders
+                decimal_value = struct.unpack(">Q",entry[1])[0] & mask
+                #the < takes care of reverse byte orders
                 #print("masked decimal_value: {:08X}".format(decimal_value ))
                 shifted_decimal = decimal_value >> shift
+                #reverse the byte order
+                reversed_decimal = struct.unpack(fmt,struct.pack(rev_fmt,shifted_decimal))[0]
                 #print("shifted_decimal: {:08X}".format(shifted_decimal))
-                spn_value = shifted_decimal * scale + offset
+                spn_value = reversed_decimal * scale + offset
                 #print("SPN value: {}\n".format(spn_value))
                 values.append(spn_value)
             #Plot the data
@@ -509,7 +514,6 @@ class CANDecoderMainWindow(QMainWindow):
         self.control_scroll_area.setWidget(self.control_box)
         
     def load_message_table(self):
-
         if len(self.id_selection_list) == 0:
             #don't do anything if there's nothing selected.
             return
@@ -568,6 +572,63 @@ class CANDecoderMainWindow(QMainWindow):
         self.data_table.resizeColumnsToContents()
         #self.data_table.setSortingEnabled(True)
         
+    def find_transport_pgns(self):
+
+        loading_transport_progress = QProgressDialog(self)
+        loading_transport_progress.setMinimumWidth(500)
+        loading_transport_progress.setWindowTitle("Looking for J1939 Transport Layer Messages")
+        loading_transport_progress.setMinimumDuration(0)
+        loading_transport_progress.setMaximum(len(self.message_list)-1)
+        loading_transport_progress.setWindowModality(Qt.ApplicationModal)
+
+        self.id_selection_list = []
+        for trial_id in self.ID_dict.keys():
+            #print("{:08X}".format(trial_id & 0x00FF0000))
+            if (trial_id & 0x00FF0000) == 0x00EC0000:
+                self.id_selection_list.append("{:08X}".format(trial_id))
+            if (trial_id & 0x00FF0000) == 0x00EB0000:
+                self.id_selection_list.append("{:08X}".format(trial_id))
+        #print(self.id_selection_list)
+        self.load_message_table()
+        #Load the data
+        filled_rows = 0
+        self.BAMs = {}
+        new_pgn = {}
+        new_data = {}
+        new_packets = {}
+        new_length = {}
+        BAM_byte_counter = 0
+        for row in range(len(self.message_list)):
+            loading_transport_progress.setValue(row)
+            if loading_transport_progress.wasCanceled():
+                break
+            #self.data_table.insertRow(row) #this is slow
+            trial_id = self.message_list[row]["ID"]
+            sa = self.message_list[row]["SA"]
+            if (trial_id & 0x00FF0000) == 0x00EC0000: #connection management message
+                message = self.message_list[row]["Bytes"]
+    
+                if message[0] == 32: #BAM,CTS
+                    new_pgn[sa] = (message[7] << 16) + (message[6] << 8) + message[5]
+                    new_length[sa] = (message[2] << 8) + message[1]
+                    new_packets[sa] = message[3]
+                    new_data[sa] = [0xFF for i in range(7*new_packets[sa])]
+                    
+            elif (trial_id & 0x00FF0000) == 0x00EB0000: # Data Transfer
+                message = self.message_list[row]["Bytes"]
+                #print("{:08X}".format(trial_id) + "".join(" {:02X}".format(d) for d in message))
+                if sa in new_data.keys():
+                    for b,i in zip(message[1:],range(7)):
+                        new_data[sa][i+7*(message[0]-1)] = b
+                    if message[0] == new_packets[sa]:
+                        data_bytes = bytes(new_data[sa][0:new_length[sa]])
+                        if sa in self.BAMs.keys():
+                            self.BAMs[sa].append( (self.message_list[row]["Real Time"],data_bytes,new_pgn[sa]) )
+                        else:
+                            self.BAMs[sa]= [ (self.message_list[row]["Real Time"],data_bytes,new_pgn[sa]) ]
+                
+        
+        print(self.BAMs)
         
     def compute_stats(self):
         
