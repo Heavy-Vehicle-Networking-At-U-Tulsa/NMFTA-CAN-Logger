@@ -108,22 +108,15 @@ class CANDecoderMainWindow(QMainWindow):
         self.data_toolbar.addAction(load_action)
         
         self.main_widget = QWidget()
-        
-        
-        
-        #Set up a Table to display CAN Messages data
-        self.data_table = QTableWidget()
-        #self.data_table.itemSelectionChanged.connect(self.compute_stats)
-  
-        #Set up a table to display CAN ID data
-        self.can_id_table = QTableWidget()
            
         self.main_widget = QWidget(self)
         self.graph_canvas = MyDynamicMplCanvas(self.main_widget, width=5, height=4, dpi=100)
         
         #Define where the widgets go in the window
         #We start by defining some boxes that we can arrange
-        
+
+        #Set up a Table to display CAN Messages data
+        self.data_table = QTableWidget()
         #Create a GUI box to put all the table and data widgets in
         table_box = QGroupBox("Data Table")
         #Create a layout for that box using the vertical
@@ -133,7 +126,8 @@ class CANDecoderMainWindow(QMainWindow):
         #setup the layout to be displayed in the box
         table_box.setLayout(table_box_layout)
 
-
+        #Set up a table to display CAN ID data
+        self.can_id_table = QTableWidget()
         can_id_box = QGroupBox("CAN ID Table")
         #Create a layout for that box using the vertical
         can_id_box_layout = QVBoxLayout()
@@ -141,6 +135,15 @@ class CANDecoderMainWindow(QMainWindow):
         can_id_box_layout.addWidget(self.can_id_table)
         #setup the layout to be displayed in the box
         can_id_box.setLayout(can_id_box_layout)
+
+        self.transport_layer_table = QTableWidget()
+        transport_layer_box = QGroupBox("Transport Layer Message Table")
+        #Create a layout for that box using the vertical
+        transport_layer_layout = QVBoxLayout()
+        #Add the widgets into the layout
+        transport_layer_layout.addWidget(self.transport_layer_table)
+        #setup the layout to be displayed in the box
+        transport_layer_box.setLayout(transport_layer_layout)
 
         #Setup the area for plotting SPNs
         self.control_scroll_area = QScrollArea()
@@ -185,8 +188,9 @@ class CANDecoderMainWindow(QMainWindow):
         self.grid_layout.addWidget(can_id_box,0,0,1,2) 
         self.grid_layout.addWidget(self.control_scroll_area,1,0)
         self.grid_layout.addWidget(self.info_scroll_area,1,1)
-        self.grid_layout.addWidget(self.graph_canvas,1,2) 
+        self.grid_layout.addWidget(self.graph_canvas,1,2,2,1) 
         self.grid_layout.addWidget(table_box,0,2)
+        self.grid_layout.addWidget(transport_layer_box,2,0,1,2)
         self.grid_layout.setRowStretch(0, 3)
         
         self.main_widget.setLayout(self.grid_layout)
@@ -386,6 +390,7 @@ class CANDecoderMainWindow(QMainWindow):
         self.can_id_table.doubleClicked.connect(self.load_message_table)
         self.can_id_table.itemSelectionChanged.connect(self.create_spn_plot_buttons)
         self.can_id_table.resizeColumnsToContents()
+
         self.find_transport_pgns()
         
    
@@ -524,12 +529,12 @@ class CANDecoderMainWindow(QMainWindow):
         self.data_table.setSortingEnabled(False)
         self.data_table.setRowCount(len(self.message_list))            
 
-        self.loading_table_progress = QProgressDialog(self)
-        self.loading_table_progress.setMinimumWidth(300)
-        self.loading_table_progress.setWindowTitle("Filling Table with Data")
-        self.loading_table_progress.setMinimumDuration(3000)
-        self.loading_table_progress.setMaximum(len(self.message_list)-1)
-        self.loading_table_progress.setWindowModality(Qt.ApplicationModal)
+        loading_table_progress = QProgressDialog(self)
+        loading_table_progress.setMinimumWidth(300)
+        loading_table_progress.setWindowTitle("Filling Table with Data")
+        loading_table_progress.setMinimumDuration(3000)
+        loading_table_progress.setMaximum(len(self.message_list)-1)
+        loading_table_progress.setWindowModality(Qt.ApplicationModal)
 
         
         #Set the headers
@@ -543,8 +548,8 @@ class CANDecoderMainWindow(QMainWindow):
         #Load the data
         filled_rows = 0
         for row in range(len(self.message_list)):
-            self.loading_table_progress.setValue(row)
-            if self.loading_table_progress.wasCanceled():
+            loading_table_progress.setValue(row)
+            if loading_table_progress.wasCanceled():
                 break
             #self.data_table.insertRow(row) #this is slow
             id_text = "{:08X}".format(self.message_list[row]["ID"])
@@ -627,8 +632,35 @@ class CANDecoderMainWindow(QMainWindow):
                         else:
                             self.BAMs[sa]= [ (self.message_list[row]["Real Time"],data_bytes,new_pgn[sa]) ]
                 
-        
-        print(self.BAMs)
+
+        #Set the headers
+        self.transport_layer_table_columns = ["PGN","Acronym","SA","Data"]
+        self.transport_layer_table.setColumnCount(len(self.transport_layer_table_columns))
+        self.transport_layer_table.setHorizontalHeaderLabels(self.transport_layer_table_columns)
+        #self.transport_layer_table.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
+        self.transport_layer_table.clearContents()
+        display = {}
+        for key,item in sorted(self.BAMs.items()):
+            SA_entry = "{:3d}".format(key)
+            for entry in item:
+                PGN_entry = "{:8d}".format(entry[2])
+                try:
+                    acronym = self.j1939db["J1939PGNdb"]["{}".format(entry[2])]["Label"]
+                except KeyError:
+                   acronym = "Unknown"
+                data = entry[1].decode("ascii","backslashreplace")
+                display[PGN_entry+SA_entry]=[PGN_entry,acronym,SA_entry,data]
+
+        for row_values in sorted(display.values()):
+                row = self.transport_layer_table.rowCount()
+                self.transport_layer_table.insertRow(row)
+                for col in range(self.transport_layer_table.columnCount()):
+                    entry = QTableWidgetItem(row_values[col])
+                    entry.setFlags(entry.flags() & ~Qt.ItemIsEditable)
+                    self.transport_layer_table.setItem(row,col,entry)
+
+        self.transport_layer_table.resizeColumnsToContents()
+        self.transport_layer_table.setSortingEnabled(True)
         
     def compute_stats(self):
         
