@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (QMainWindow,
                              QGridLayout,
                              QGroupBox,
                              QAction,
+                             QDockWidget,
                              QProgressDialog)
 from PyQt5.QtCore import (Qt, 
                           QTimer, 
@@ -89,6 +90,19 @@ class CANDecoderMainWindow(QMainWindow):
         load_action.setStatusTip('Filter selected message IDs into the Data Table')
         load_action.triggered.connect(self.load_message_table)
         data_menu.addAction(load_action)
+
+        #Data Menu Items
+        view_menu = menubar.addMenu('&View')
+        transport_action = QAction(QIcon(r'icons8_Variation_48px.png'), '&Find Transport Messages', self)        
+        transport_action.setStatusTip('Find all the transport layer messages in J1939')
+        transport_action.triggered.connect(self.find_transport_pgns)
+        view_menu.addAction(transport_action)
+        
+        transport_show = QAction(QIcon(r'icons8_New_Presentation_48px.png'), '&Show Transport Message Window', self)        
+        transport_show.setStatusTip('Display the dockable transport layer message window.')
+        transport_show.triggered.connect(self.show_transport_dock)
+        view_menu.addAction(transport_show)
+        
        
         #Help Menu Items
         help_menu = menubar.addMenu('&Help')
@@ -106,6 +120,7 @@ class CANDecoderMainWindow(QMainWindow):
 
         self.data_toolbar = self.addToolBar("Data")
         self.data_toolbar.addAction(load_action)
+        self.data_toolbar.addAction(transport_action)
         
         self.main_widget = QWidget()
            
@@ -137,18 +152,18 @@ class CANDecoderMainWindow(QMainWindow):
         can_id_box.setLayout(can_id_box_layout)
 
         self.transport_layer_table = QTableWidget()
-        transport_layer_box = QGroupBox("Transport Layer Message Table")
+        transport_layer_box = QWidget()
+        self.transport_layer_dock = QDockWidget("Transport Layer Message Table", self)
         #Create a layout for that box using the vertical
         transport_layer_layout = QVBoxLayout()
         #Add the widgets into the layout
         transport_layer_layout.addWidget(self.transport_layer_table)
+        self.transport_layer_dock.setWidget(transport_layer_box)
         #setup the layout to be displayed in the box
         transport_layer_box.setLayout(transport_layer_layout)
 
         #Setup the area for plotting SPNs
         self.control_scroll_area = QScrollArea()
-        #self.control_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        #self.control_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.control_scroll_area.setWidgetResizable(True)
         #Create the container widget
         self.control_box = QWidget()
@@ -190,7 +205,7 @@ class CANDecoderMainWindow(QMainWindow):
         self.grid_layout.addWidget(self.info_scroll_area,1,1)
         self.grid_layout.addWidget(self.graph_canvas,1,2,2,1) 
         self.grid_layout.addWidget(table_box,0,2)
-        self.grid_layout.addWidget(transport_layer_box,2,0,1,2)
+        self.grid_layout.addWidget(self.transport_layer_dock,2,0,1,2)
         self.grid_layout.setRowStretch(0, 3)
         
         self.main_widget.setLayout(self.grid_layout)
@@ -661,71 +676,9 @@ class CANDecoderMainWindow(QMainWindow):
 
         self.transport_layer_table.resizeColumnsToContents()
         self.transport_layer_table.setSortingEnabled(True)
-        
-    def compute_stats(self):
-        
-        #setup array
-        item_list=[]
-        items = self.data_table.selectedItems()
-        for item in items:
-            try:
-                item_list.append(float(item.text()))
-            except:
-                pass
-        
-        if len(item_list) > 1: #Check to see if there are 2 or more samples
-            data_array = np.asarray(item_list)
-            mean_value = np.mean(data_array)
-            stdev_value = np.std(data_array)
-            
-            print("Mean = {0:5f}".format(mean_value))
-            self.mean_label.setText("Mean = {:0.3f}".format(mean_value))
-            self.std_label.setText("Std Dev = {:0.4f}".format(stdev_value))
-            
-            self.graph_canvas.plot_histogram(data_array)
-            if self.normal_checkbox.isChecked():
-                self.graph_canvas.plot_normal(mean_value,stdev_value)
-
- 
-        
-
-def excepthook(excType, excValue, tracebackobj):
-    """
-    Global function to catch unhandled exceptions.
-    
-    @param excType exception type
-    @param excValue exception value
-    @param tracebackobj traceback object
-    """
-    separator = '-' * 80
-    logFile = "simple.log"
-    notice = \
-        """An unhandled exception occurred. Please report the problem\n"""\
-        """using the error reporting dialog or via email to <%s>.\n"""\
-        """A log has been written to "%s".\n\nError information:\n""" % \
-        ("yourmail at server.com", "")
-    versionInfo="0.0.1"
-    timeString = time.strftime("%Y-%m-%d, %H:%M:%S")
-    
-    
-    tbinfofile = cStringIO.StringIO()
-    traceback.print_tb(tracebackobj, None, tbinfofile)
-    tbinfofile.seek(0)
-    tbinfo = tbinfofile.read()
-    errmsg = '%s: \n%s' % (str(excType), str(excValue))
-    sections = [separator, timeString, separator, errmsg, separator, tbinfo]
-    msg = '\n'.join(sections)
-    try:
-        f = open(logFile, "w")
-        f.write(msg)
-        f.write(versionInfo)
-        f.close()
-    except IOError:
-        pass
-    errorbox = QtGui.QMessageBox()
-    errorbox.setText(str(notice)+str(msg)+str(versionInfo))
-    errorbox.exec_()
-sys.excepthook = excepthook
+        self.transport_layer_dock.show()#.setFloating(True)
+    def show_transport_dock(self):
+        self.transport_layer_dock.show()
     
 if __name__ == '__main__':
     #Start the program this way according to https://stackoverflow.com/questions/40094086/python-kernel-dies-for-second-run-of-pyqt5-gui
