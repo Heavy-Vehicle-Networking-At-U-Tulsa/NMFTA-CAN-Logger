@@ -1,8 +1,22 @@
 #!/bin/env/python
-# An introduction sample source code for some basic statistics
+# 
 
 
-#Import 
+program_title = "NMFTA CAN Data Analyzer"
+program_version = "0.1beta"
+program_author = "Jeremy Daily"
+program_position = "Department of Mechanical Engineering"
+program_affiliation = "The University of Tulsa"
+
+license_text ='''Unless otherwise noted or conflicting, the contents of this repository are released under the MIT license:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software, hardware and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE OR HARDWARE.
+'''
+
 import sys
 from PyQt5.QtWidgets import (QMainWindow,
                              QWidget, 
@@ -44,11 +58,6 @@ from graphing import * #this is a custom class file for graphics
 
 rcParams.update({'figure.autolayout': True}) #Depends of matplotlib from graphing
 
-program_title = "NMFTA CAN Data Analyzer"
-program_version = "0.1beta"
-program_author = "Jeremy Daily"
-program_position = "Department of Mechanical Engineering"
-program_affiliation = "The University of Tulsa"
 
       
 class CANDecoderMainWindow(QMainWindow):
@@ -56,9 +65,11 @@ class CANDecoderMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.home_directory = os.getcwd()
-        self.setGeometry(100,100,1615,900)
+        self.setGeometry(0,0,1920,1080)
         # Upon startup, run a user interface routine
         self.init_ui()
+        self.data_file_name = "example.bin"
+        self.load_table()
         #self.showMaximized()
               
     def init_ui(self):
@@ -213,7 +224,7 @@ class CANDecoderMainWindow(QMainWindow):
         
         self.setWindowTitle(program_title)
         self.show()
-        self.load_table("example.bin")
+        
         
     def show_about_dialog(self):
         msg = QMessageBox()
@@ -236,50 +247,51 @@ class CANDecoderMainWindow(QMainWindow):
         print("Loading Data")
         options = QFileDialog.Options()
         options |= QFileDialog.Detail
-        data_file_name,data_file_type = QFileDialog.getOpenFileName(self,
+        self.data_file_name,data_file_type = QFileDialog.getOpenFileName(self,
                                         "Open Binary Log File", 
                                         #"{}".format(self.home_directory),
                                         self.home_directory,
                                         "Binary Log Files (*.bin);;All Files (*)",
                                         options=options)
-        if data_file_name:
-            print(data_file_name)
+        if self.data_file_name:
+            print(self.data_file_name)
             
             
             self.statusBar().showMessage(
-                    "Successfully Opened {}.".format(data_file_name))
-            self.load_table(data_file_name)
+                    "Successfully Opened {}.".format(self.data_file_name))
+            self.setWindowTitle(program_title + " - " + self.data_file_name)
+            self.load_table()
         else:
            self.statusBar().showMessage("Failed to open file.")
         
-    def load_table(self,data_file_name):        
+    def load_table(self):        
         #This may be a long process, so let's show a progress bar:
         
         
         fileLocation = 0
         startTime = None
-        file_size = os.path.getsize(data_file_name)
+        file_size = os.path.getsize(self.data_file_name)
         print("File size is {} bytes".format(file_size))
 
-        self.loading_progress = QProgressDialog(self)
-        self.loading_progress.setMinimumWidth(300)
-        self.loading_progress.setWindowTitle("Loading and Converting Binary")
-        self.loading_progress.setMinimumDuration(0)
-        self.loading_progress.setMaximum(file_size)
-        self.loading_progress.setWindowModality(Qt.ApplicationModal)
+        loading_progress = QProgressDialog(self)
+        loading_progress.setMinimumWidth(300)
+        loading_progress.setWindowTitle("Loading and Converting Binary")
+        loading_progress.setMinimumDuration(0)
+        loading_progress.setMaximum(file_size)
+        loading_progress.setWindowModality(Qt.ApplicationModal)
 
         self.message_list = []
         self.ID_dict={}
         self.PGN_dict={}
 
-        with open(data_file_name,'rb') as binFile:         
+        with open(self.data_file_name,'rb') as binFile:         
             while (fileLocation < file_size):
                 block = binFile.read(512)
                 fileLocation+=512
                 binFile.seek(fileLocation)
                 #print(".",end='')
-                self.loading_progress.setValue(fileLocation)
-                if self.loading_progress.wasCanceled():
+                loading_progress.setValue(fileLocation)
+                if loading_progress.wasCanceled():
                     break
                 for recordNum in range(21):
                     record = block[4+recordNum*24:4+(recordNum+1)*24]
@@ -332,20 +344,29 @@ class CANDecoderMainWindow(QMainWindow):
         self.load_can_id_table()
         
     def load_can_id_table(self):
+
+        loading_progress = QProgressDialog(self)
+        loading_progress.setMinimumWidth(300)
+        loading_progress.setWindowTitle("Filling CAN ID Table")
+        loading_progress.setMinimumDuration(0)
+        loading_progress.setMaximum(len(self.ID_dict))
+        loading_progress.setWindowModality(Qt.ApplicationModal)
+
         #load the J1939 Database
         with open("J1939db.json",'r') as j1939_file:
             self.j1939db = json.load(j1939_file)
         pgn_names = self.j1939db["J1939PGNdb"]
         source_address_names = self.j1939db["J1939SATabledb"]
-        
+
+        self.can_id_table.clear()
         #Set the headers
         self.can_id_table_columns = ["Hex CAN ID", "PGN","Acronym","DA","SA","Source","Count","Period (ms)", "Freq. (Hz)"]
         self.can_id_table.setColumnCount(len(self.can_id_table_columns))
         self.can_id_table.setHorizontalHeaderLabels(self.can_id_table_columns)
         self.can_id_table.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
-        self.can_id_table.clearContents()
         
-        self.can_id_table.setRowCount(len(self.ID_dict))
+        
+        self.can_id_table.setRowCount(0)
         row = 0
         for key,item in sorted(self.ID_dict.items()):
             #print(item["PGN"])
@@ -378,8 +399,13 @@ class CANDecoderMainWindow(QMainWindow):
                 acronym = pgn_names["{}".format(item["PGN"])]["Label"]
             except KeyError:
                 acronym = "Unknown"
-            SPNs = pgn_names["{}".format(item["PGN"])]["SPNs"]
-            
+
+            try:
+                SPNs = pgn_names["{}".format(item["PGN"])]["SPNs"]
+            except KeyError:
+                SPNs = []
+            row = self.can_id_table.rowCount()
+            self.can_id_table.insertRow(row)
             row_values = ["{:08X}".format(key),
                           "{:8d}".format(item["PGN"]),
                           acronym,
@@ -395,10 +421,17 @@ class CANDecoderMainWindow(QMainWindow):
                 entry = QTableWidgetItem(row_values[col])
                 entry.setFlags(entry.flags() & ~Qt.ItemIsEditable)
                 self.can_id_table.setItem(row,col,entry)
-            row += 1
-            self.statusBar().showMessage("Found {} unique IDs.".format(row))            
-            self.data_table.resizeColumnsToContents()
 
+            loading_progress.setValue(row)
+            if loading_progress.wasCanceled():
+                break
+
+        loading_progress.setValue(row+1)
+        
+        self.statusBar().showMessage("Found {} unique IDs.".format(row))            
+        
+        print("Finished loading CAN ID Table.")
+            
         self.id_selection_list=[] #create an empty list
         self.can_id_table.setSortingEnabled(True)
         self.can_id_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -470,7 +503,7 @@ class CANDecoderMainWindow(QMainWindow):
                 values.append(spn_value)
             #Plot the data
             self.graph_canvas.plot_data(times,values,"SPN {}".format(spn))
-            self.graph_canvas.title("")
+            self.graph_canvas.title(self.data_file_name)
             self.graph_canvas.xlabel("Time (sec)")
             self.graph_canvas.ylabel("{} ({})".format(name,units))
             
@@ -522,11 +555,14 @@ class CANDecoderMainWindow(QMainWindow):
             id_key=int(id_text,16)
             pgn = self.ID_dict[id_key]["PGN"]
             #print("PGN: {}".format(pgn))
-            for spn in sorted(self.j1939db["J1939PGNdb"]["{}".format(pgn)]["SPNs"]):
-                spn_name = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Name"]
-                self.spn_list.append(spn)
-                self.spn_plot_checkbox[spn]= QCheckBox("Plot SPN {}: {}".format(spn,spn_name),self)
-                self.spn_plot_checkbox[spn].stateChanged.connect(partial(self.plot_SPN,spn,id_key)) #We need to pass the SPN to the plotter
+            try:
+                for spn in sorted(self.j1939db["J1939PGNdb"]["{}".format(pgn)]["SPNs"]):
+                    spn_name = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Name"]
+                    self.spn_list.append(spn)
+                    self.spn_plot_checkbox[spn]= QCheckBox("Plot SPN {}: {}".format(spn,spn_name),self)
+                    self.spn_plot_checkbox[spn].stateChanged.connect(partial(self.plot_SPN,spn,id_key)) #We need to pass the SPN to the plotte
+            except KeyError:
+                pass
         for spn in sorted(self.spn_list):
             self.control_box_layout.addWidget(self.spn_plot_checkbox[spn])
 
@@ -561,7 +597,7 @@ class CANDecoderMainWindow(QMainWindow):
         self.data_table.resizeColumnsToContents()
         
         #Load the data
-        filled_rows = 0
+        self.data_table.setRowCount(0)
         for row in range(len(self.message_list)):
             loading_table_progress.setValue(row)
             if loading_table_progress.wasCanceled():
@@ -581,25 +617,21 @@ class CANDecoderMainWindow(QMainWindow):
                               self.message_list[row]["DLC"]]
                 for i in range(len(self.message_list[row]["Payload"])):
                     row_values.append("{:02X}".format(self.message_list[row]["Payload"][i]))
+
+                filled_rows = self.data_table.rowCount()
+                self.data_table.insertRow(filled_rows)
                 for col in range(len(data_table_columns)):
                     entry = QTableWidgetItem("{}".format(row_values[col]))
                     entry.setFlags(entry.flags() & ~Qt.ItemIsEditable)
                     self.data_table.setItem(filled_rows,col,entry)
-                filled_rows+=1
-        self.data_table.setRowCount(filled_rows)
+                #filled_rows+=1
+        #self.data_table.setRowCount(filled_rows)
         
         self.statusBar().showMessage("Filled {} rows.".format(filled_rows))            
         self.data_table.resizeColumnsToContents()
         #self.data_table.setSortingEnabled(True)
         
     def find_transport_pgns(self):
-
-        loading_transport_progress = QProgressDialog(self)
-        loading_transport_progress.setMinimumWidth(500)
-        loading_transport_progress.setWindowTitle("Looking for J1939 Transport Layer Messages")
-        loading_transport_progress.setMinimumDuration(0)
-        loading_transport_progress.setMaximum(len(self.message_list)-1)
-        loading_transport_progress.setWindowModality(Qt.ApplicationModal)
 
         self.id_selection_list = []
         for trial_id in self.ID_dict.keys():
@@ -610,6 +642,16 @@ class CANDecoderMainWindow(QMainWindow):
                 self.id_selection_list.append("{:08X}".format(trial_id))
         #print(self.id_selection_list)
         self.load_message_table()
+
+
+        loading_transport_progress = QProgressDialog(self)
+        loading_transport_progress.setMinimumWidth(500)
+        loading_transport_progress.setWindowTitle("Looking for J1939 Transport Layer Messages")
+        loading_transport_progress.setMinimumDuration(0)
+        loading_transport_progress.setMaximum(len(self.message_list))
+        loading_transport_progress.setWindowModality(Qt.ApplicationModal)
+
+
         #Load the data
         filled_rows = 0
         self.BAMs = {}
@@ -619,7 +661,7 @@ class CANDecoderMainWindow(QMainWindow):
         new_length = {}
         BAM_byte_counter = 0
         for row in range(len(self.message_list)):
-            loading_transport_progress.setValue(row)
+            loading_transport_progress.setValue(row+1)
             if loading_transport_progress.wasCanceled():
                 break
             #self.data_table.insertRow(row) #this is slow
@@ -666,6 +708,7 @@ class CANDecoderMainWindow(QMainWindow):
                 data = entry[1].decode("ascii","backslashreplace")
                 display[PGN_entry+SA_entry]=[PGN_entry,acronym,SA_entry,data]
 
+        self.transport_layer_table.setRowCount(0)
         for row_values in sorted(display.values()):
                 row = self.transport_layer_table.rowCount()
                 self.transport_layer_table.insertRow(row)
@@ -677,9 +720,50 @@ class CANDecoderMainWindow(QMainWindow):
         self.transport_layer_table.resizeColumnsToContents()
         self.transport_layer_table.setSortingEnabled(True)
         self.transport_layer_dock.show()#.setFloating(True)
+        #close the progress bar
+        #loading_transport_progress.setValue(row+2)
+        
     def show_transport_dock(self):
         self.transport_layer_dock.show()
+
+def excepthook(excType, excValue, tracebackobj):
+    """
+    Global function to catch unhandled exceptions.
     
+    @param excType exception type
+    @param excValue exception value
+    @param tracebackobj traceback object
+    """
+    separator = '-' * 80
+    logFile = "simple.log"
+    notice = \
+        """An unhandled exception occurred. Please report the problem\n"""\
+        """using the error reporting dialog or via email to <%s>.\n"""\
+        """A log has been written to "%s".\n\nError information:\n""" % \
+        ("yourmail at server.com", "")
+    versionInfo="0.0.1"
+    timeString = time.strftime("%Y-%m-%d, %H:%M:%S")
+    
+    
+    tbinfofile = cStringIO.StringIO()
+    traceback.print_tb(tracebackobj, None, tbinfofile)
+    tbinfofile.seek(0)
+    tbinfo = tbinfofile.read()
+    errmsg = '%s: \n%s' % (str(excType), str(excValue))
+    sections = [separator, timeString, separator, errmsg, separator, tbinfo]
+    msg = '\n'.join(sections)
+    try:
+        f = open(logFile, "w")
+        f.write(msg)
+        f.write(versionInfo)
+        f.close()
+    except IOError:
+        pass
+    errorbox = QtGui.QMessageBox()
+    errorbox.setText(str(notice)+str(msg)+str(versionInfo))
+    errorbox.exec_()
+sys.excepthook = excepthook
+
 if __name__ == '__main__':
     #Start the program this way according to https://stackoverflow.com/questions/40094086/python-kernel-dies-for-second-run-of-pyqt5-gui
     app = QCoreApplication.instance()

@@ -31,13 +31,29 @@ SOFTWARE OR HARDWARE.
 
 ## Using the Software
 To run the software in this repository, you will need the following:
-* Arduino 1.6.11
-* Teensyduino 1.30
-* Python 3.4
+* Arduino 1.6.11 or better
+* Teensyduino 1.30 or better 
+* Python 3.4 or between
 * PySerial
 * Matplotlib
+* PyQt5
+* Numpy
 
-##About the Source Code
+
+The Python libraries can be installed using the command 'pip'.
+
+Example, once Python 3 is installed, run these in a command prompt (Windows + R then type ```cmd```):
+
+```pip install PyQt5```
+
+```pip install numpy```
+
+```pip install matplotlib```
+
+The GUI library of PyQt5 is used to visualize and process CAN data. The code is found in the Utilities directory under Decoding GUI.
+
+
+## About the Source Code
 The enumerated folders contain Arduino sketches that compile using the Teensyduino extention. Teensyduino is installed to augment the Arduino programming environment. The sketches follow the development progression and test basic functionality. They build on one another and each bring in different functionality. Many sketches are based off library examples and modified to suit the CAN Logger hardware.
 
 Some extra libraries are needed to make use of the hardware on the NMFTA board.
