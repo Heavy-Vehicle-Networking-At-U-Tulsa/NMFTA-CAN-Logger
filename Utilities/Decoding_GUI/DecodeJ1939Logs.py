@@ -16,8 +16,15 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE OR HARDWARE.
 '''
+import pandas as pd
+import numpy as np
 
 import sys
+import os
+import struct
+import time
+import json
+
 from PyQt5.QtWidgets import (QMainWindow,
                              QWidget, 
                              QTreeView, 
@@ -44,14 +51,12 @@ from PyQt5.QtWidgets import (QMainWindow,
                              QDockWidget,
                              QProgressDialog)
 from PyQt5.QtCore import (Qt, 
-                          QTimer, 
-                          QCoreApplication)
+                          QTimer,
+                          QVariant, 
+                          QCoreApplication,
+                          QAbstractTableModel,
+                          QModelIndex)
 from PyQt5.QtGui import QIcon
-import numpy as np
-import os
-import struct
-import time
-import json
 from functools import partial
 
 from graphing import * #this is a custom class file for graphics
@@ -64,13 +69,24 @@ class CANDecoderMainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.setGeometry(100,100,1820,980)
+        #self.showMaximized()
+
         self.home_directory = os.getcwd()
-        self.setGeometry(0,0,1920,1080)
+        self.message_dataframe = None
+
         # Upon startup, run a user interface routine
         self.init_ui()
+
+        #load the J1939 Database
+        with open("J1939db.json",'r') as j1939_file:
+            self.j1939db = json.load(j1939_file)
+
+        #load an examle file
         self.data_file_name = "example.bin"
-        self.load_table()
-        #self.showMaximized()
+        self.load_binary()
+        
+        
               
     def init_ui(self):
         #Builds Graphical User Interface (GUI)
@@ -142,7 +158,8 @@ class CANDecoderMainWindow(QMainWindow):
         #We start by defining some boxes that we can arrange
 
         #Set up a Table to display CAN Messages data
-        self.data_table = QTableWidget()
+        #self.data_table = QTableWidget()
+        self.data_table = QTableView(self)
         #Create a GUI box to put all the table and data widgets in
         table_box = QGroupBox("Data Table")
         #Create a layout for that box using the vertical
@@ -187,7 +204,7 @@ class CANDecoderMainWindow(QMainWindow):
         #set the layout so labels are at the top
         self.control_box_layout.setAlignment(Qt.AlignTop)
         
-        label = QLabel("Select a CAN ID to see and plot the available Suspect Pameter Numbers.")
+        label = QLabel("Select a CAN ID to see and plot the available Suspect Parameter Numbers.")
         self.control_box_layout.addWidget(label)
         
         #Setup the area for plotting SPNs
@@ -255,16 +272,15 @@ class CANDecoderMainWindow(QMainWindow):
                                         options=options)
         if self.data_file_name:
             print(self.data_file_name)
-            
-            
             self.statusBar().showMessage(
                     "Successfully Opened {}.".format(self.data_file_name))
             self.setWindowTitle(program_title + " - " + self.data_file_name)
-            self.load_table()
+            self.load_binary(append_data_frame=True)
+
         else:
            self.statusBar().showMessage("Failed to open file.")
         
-    def load_table(self):        
+    def load_binary(self,append_data_frame = False):        
         #This may be a long process, so let's show a progress bar:
         
         
@@ -280,10 +296,8 @@ class CANDecoderMainWindow(QMainWindow):
         loading_progress.setMaximum(file_size)
         loading_progress.setWindowModality(Qt.ApplicationModal)
 
-        self.message_list = []
-        self.ID_dict={}
-        self.PGN_dict={}
-
+        message_list = []
+        first_time = True
         with open(self.data_file_name,'rb') as binFile:         
             while (fileLocation < file_size):
                 block = binFile.read(512)
@@ -295,139 +309,203 @@ class CANDecoderMainWindow(QMainWindow):
                     break
                 for recordNum in range(21):
                     record = block[4+recordNum*24:4+(recordNum+1)*24]
-
                     
                     timeSeconds = struct.unpack("<L",record[0:4])[0]
                     timeMicrosecondsAndDLC = struct.unpack("<L",record[8:12])[0]
                     timeMicroseconds = timeMicrosecondsAndDLC & 0x00FFFFFF
-
-                    message = {}
-                    message["Real Time"] = timeSeconds + timeMicroseconds * 0.000001
-                    message["DLC"] = (timeMicrosecondsAndDLC & 0xFF000000) >> 24
-                    message["Logger Micros"] = struct.unpack("<L",record[4:8])[0]
-                    message["ID"] = struct.unpack("<L",record[12:16])[0]
-                    message["Bytes"] = record[16:24]
-                    message["Payload"] = struct.unpack("BBBBBBBB",record[16:24])
-                    message["SA"] = (0x000000FF & message["ID"])
-                    message["PF"] = (0x00FF0000 & message["ID"]) >> 16
-                    message["DA"] = (0x0000FF00 & message["ID"]) >> 8
-                    
-                    if message["PF"] >= 240: #PDU2 format
-                      message["PGN"] = message["PF"]*256+message["DA"]
-                      message["DA"] = 0xFF
-                    else:
-                      message["PGN"] = message["PF"]*256
+                    real_time = timeSeconds + timeMicroseconds * 0.000001
+                    if first_time:
+                        previous_time = real_time
+                        first_time = False
+                    DLC = (timeMicrosecondsAndDLC & 0xFF000000) >> 24
+                    ID = struct.unpack("<L",record[12:16])[0]
+                    (PGN,DA,SA) = self.parse_j1939_id(ID)
+                    message_bytes = record[16:24]
 
                     if startTime == None:
                         startTime=timeSeconds + timeMicroseconds * 0.000001
+                    delta_time = real_time - previous_time
+                    previous_time = real_time
+                    rel_time = real_time-startTime
                     
-                    message["Rel Time"] = message["Real Time"]-startTime
-                    
-                    self.message_list.append(message)
-                    
-                    if message["ID"] in self.ID_dict.keys():
-                        #Count and append to the existing field
-                        self.ID_dict[message["ID"]]["Count"] += 1
-                        self.ID_dict[message["ID"]]["Data"].append((message["Rel Time"],message["Bytes"]))
-                        self.ID_dict[message["ID"]]["EndTime"]=message["Real Time"]
-                    else:
-                        #initialize the data field
-                        self.ID_dict[message["ID"]] = {"Count":1,
-                                                       "StartTime":message["Real Time"],
-                                                       "EndTime":message["Real Time"],
-                                                       "DLC":message["DLC"],
-                                                       "PGN":message["PGN"],
-                                                       "PGN Name":"",
-                                                       "SA":message["SA"],
-                                                       "DA":message["DA"],
-                                                       "Data":[ (message["Rel Time"],message["Bytes"]) ]}
-        self.load_can_id_table()
+                    message_list.append([real_time,rel_time,delta_time,ID,PGN,DA,SA,DLC] + [b for b in message_bytes] + [message_bytes])
+
+        self.message_dataframe = pd.DataFrame(message_list, columns = ["Abs. Time","Rel. Time","Delta Time","ID","PGN","DA","SA","DLC","B0","B1","B2","B3","B4","B5","B6","B7","Bytes"])
         
+        #self.load_message_table(self.message_dataframe)
+        self.load_can_id_table()
+        self.find_transport_pgns()
+
+    def load_message_table(self,message_df):
+        
+        loading_progress = QProgressDialog(self)
+        loading_progress.setMinimumWidth(300)
+        loading_progress.setWindowTitle("Loading Data Table")
+        loading_progress.setMinimumDuration(4000)
+        
+        loading_progress.setWindowModality(Qt.ApplicationModal)
+        
+
+        message_df.drop("Delta Time",axis=1,inplace=True)
+        time_deltas = message_df["Abs. Time"].diff()
+        #print(time_deltas)
+        message_df.insert(2,"Delta Time",time_deltas)
+        
+        print(message_df.head())
+
+        self.can_data_display_model = CANMessageModel(message_df)
+        self.data_table.setModel(self.can_data_display_model)
+        self.data_table.resizeColumnsToContents()
+        self.data_table.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
+        header = self.data_table.horizontalHeader()
+        self.data_table.selectionModel().selectedColumns()
+        header.sectionClicked.connect(self.plot_column)
+        self.time_list=message_df["Rel. Time"].tolist()
+        loading_progress.close()
+        
+
+    def plot_column(self):
+        #print("Clicked Header")
+        #header_indicies = self.data_table.selectionModel().selectedColumns()
+        #print(QTableWidget.currentColumn)
+        self.graph_canvas.clear()
+        values = {}
+        for selection in self.data_table.selectedIndexes():
+            #print(str(selection.row()) + ' ' + str(selection.column()))
+            #print(selection.data())     
+            if selection.column() == 16:
+                return #bytes won't convert
+            if selection.column() >= 7 and selection.column() <= 15:
+                val = int(selection.data(),16)
+            elif selection.column() == 3:
+                val = int(selection.data(),16)
+            else:
+                val = float(selection.data())
+            try:
+                values[selection.column()].append(val)
+            except:
+                values[selection.column()]=[val]
+
+        
+        
+
+
+        for key,vals in values.items():
+            #print(key)
+            #print(vals)
+            self.graph_canvas.plot_data(self.time_list,vals,"Col {}".format(key))
+        self.graph_canvas.title(self.data_file_name)
+        self.graph_canvas.xlabel("Time (sec)")
+        self.graph_canvas.ylabel("Value")
+
+    def parse_j1939_id(self,ID):
+        SA = (0x000000FF & ID)
+        PF = (0x00FF0000 & ID) >> 16
+        DA = (0x0000FF00 & ID) >> 8
+        
+        if PF >= 240: #PDU2 format
+            PGN = PF*256+DA
+            DA = 0xFF
+        else:
+            PGN = PF*256
+        return (PGN,DA,SA)
+
     def load_can_id_table(self):
 
         loading_progress = QProgressDialog(self)
         loading_progress.setMinimumWidth(300)
-        loading_progress.setWindowTitle("Filling CAN ID Table")
+        loading_progress.setWindowTitle("Loading and Converting Binary")
         loading_progress.setMinimumDuration(0)
-        loading_progress.setMaximum(len(self.ID_dict))
         loading_progress.setWindowModality(Qt.ApplicationModal)
 
-        #load the J1939 Database
-        with open("J1939db.json",'r') as j1939_file:
-            self.j1939db = json.load(j1939_file)
-        pgn_names = self.j1939db["J1939PGNdb"]
-        source_address_names = self.j1939db["J1939SATabledb"]
 
+
+        #Find the number of times each unique ID happens
+        unique_ids = self.message_dataframe["ID"].value_counts()
+        print(unique_ids.head())
+        self.CAN_groups = self.message_dataframe.groupby(["ID"])
+        #print(CAN_groups.get_group(unique_ids.index[0]))
+        #return
+        unique_ids.sort_index(inplace=True)
+        print(unique_ids.head())
+            
+        pgn_names = self.j1939db["J1939PGNdb"]
+        source_address_names = self.j1939db["J1939SATabledb"]   
+        
+        self.can_id_table.setRowCount(0)
         self.can_id_table.clear()
-        #Set the headers
         self.can_id_table_columns = ["Hex CAN ID", "PGN","Acronym","DA","SA","Source","Count","Period (ms)", "Freq. (Hz)"]
         self.can_id_table.setColumnCount(len(self.can_id_table_columns))
         self.can_id_table.setHorizontalHeaderLabels(self.can_id_table_columns)
-        self.can_id_table.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
-        
-        
-        self.can_id_table.setRowCount(0)
+
         row = 0
-        for key,item in sorted(self.ID_dict.items()):
-            #print(item["PGN"])
+        loading_progress.setMaximum(len(unique_ids))    
+        for unique_id,count in unique_ids.items():
             
-            if item["DA"] == 255:
+            if loading_progress.wasCanceled():
+                break
+            #Get the pandas data frame for each unique ID
+            df = self.CAN_groups.get_group(unique_id)
+            
+            if count > 1:
+                time_deltas = df["Abs. Time"].diff()
+                period = time_deltas.mean()*1000
+            else:
+                period = 0
+            
+            (PGN,DA,SA) = self.parse_j1939_id(unique_id)
+            
+            if DA == 255:
                 DA_entry = "(255)"
                 DA_name = "All"
             else:
-                DA_entry = "{:3d}".format(item["DA"])
+                DA_entry = "{:3d}".format(DA)
                 try:
                     DA_name = source_address_names[DA_entry.strip()] #Clean whitespace off the string
                 except KeyError:
                     DA_name = "Unknown"
                     
-            SA_entry = "{:3d}".format(item["SA"])
+            SA_entry = "{:3d}".format(SA)
+            
             try:
                 SA_name = source_address_names[SA_entry.strip()] #Clean whitespace off the string
             except KeyError:
                 SA_name = "Unknown"
-                
-            period = 1000*(item["EndTime"] - item["StartTime"])/item["Count"]
+            
             if period > 0:
                 frequency = 1000/period
             else:
                 frequency = 0
-            self.ID_dict[key]["Frequency"] = frequency
-            self.ID_dict[key]["Period"] = period #in Milliseconds
-
+            
             try:
-                acronym = pgn_names["{}".format(item["PGN"])]["Label"]
+                acronym = pgn_names["{}".format(PGN)]["Label"]
             except KeyError:
                 acronym = "Unknown"
 
             try:
-                SPNs = pgn_names["{}".format(item["PGN"])]["SPNs"]
+                SPNs = pgn_names["{}".format(PGN)]["SPNs"]
             except KeyError:
                 SPNs = []
+            
             row = self.can_id_table.rowCount()
+            loading_progress.setValue(row+1)
             self.can_id_table.insertRow(row)
-            row_values = ["{:08X}".format(key),
-                          "{:8d}".format(item["PGN"]),
-                          acronym,
-                          DA_entry,
+            row_values = ["{:08X}".format(unique_id),
+                          "{:8d}".format(PGN),
+                          str(acronym),
+                          str(DA_entry),
                           #DA_name,
-                          SA_entry,
-                          SA_name,
-                          "{:12d}".format(item["Count"]),
-                          "{:5d}".format(int(period)),
-                          "{:9.3f}".format(frequency),
-                          ]
+                          str(SA_entry),
+                          str(SA_name),
+                          "{:12d}".format(count),
+                          "{:5d}".format(int(period)) ,
+                          "{:9.3f}".format(frequency)]
+            
             for col in range(self.can_id_table.columnCount()):
                 entry = QTableWidgetItem(row_values[col])
                 entry.setFlags(entry.flags() & ~Qt.ItemIsEditable)
                 self.can_id_table.setItem(row,col,entry)
 
-            loading_progress.setValue(row)
-            if loading_progress.wasCanceled():
-                break
-
-        loading_progress.setValue(row+1)
-        
         self.statusBar().showMessage("Found {} unique IDs.".format(row))            
         
         print("Finished loading CAN ID Table.")
@@ -435,15 +513,11 @@ class CANDecoderMainWindow(QMainWindow):
         self.id_selection_list=[] #create an empty list
         self.can_id_table.setSortingEnabled(True)
         self.can_id_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.can_id_table.doubleClicked.connect(self.load_message_table)
+        #self.can_id_table.doubleClicked.connect(self.load_message_table)
         self.can_id_table.itemSelectionChanged.connect(self.create_spn_plot_buttons)
         self.can_id_table.resizeColumnsToContents()
-
-        self.find_transport_pgns()
-        
-   
-        
-        
+        self.can_id_table.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
+                  
     def plot_SPN(self,spn,id_key):
         if self.spn_plot_checkbox[spn].isChecked():
             #look up items in the database
@@ -487,11 +561,14 @@ class CANDecoderMainWindow(QMainWindow):
             
             times = []
             values = []
-            for entry in self.ID_dict[id_key]["Data"]:
+            df = self.CAN_groups.get_group(id_key)
+            times = df["Rel. Time"]
+
+            for entry in df["Bytes"]:
                 #print(entry)
-                times.append(entry[0])
+                #times.append(entry[0])
                 #print("Entry: " + "".join("{:02X} ".format(d) for d in entry[1]))
-                decimal_value = struct.unpack(">Q",entry[1])[0] & mask
+                decimal_value = struct.unpack(">Q",entry)[0] & mask
                 #the < takes care of reverse byte orders
                 #print("masked decimal_value: {:08X}".format(decimal_value ))
                 shifted_decimal = decimal_value >> shift
@@ -548,109 +625,53 @@ class CANDecoderMainWindow(QMainWindow):
         self.control_box_layout.addWidget(clear_button)
     
         self.spn_list=[]
+        id_keys = [int(id_text,16) for id_text in self.id_selection_list]
         
+        self.message_selection = self.message_dataframe.loc[self.message_dataframe['ID'].isin(id_keys)]
+        self.load_message_table(self.message_selection)
+        
+
         self.spn_plot_checkbox={}
-        for id_text in self.id_selection_list:
+        
+        for id_key in id_keys:
             #we need to look up the PGN that was put into the ID_dict. The key was the ID as an integer
-            id_key=int(id_text,16)
-            pgn = self.ID_dict[id_key]["PGN"]
-            #print("PGN: {}".format(pgn))
+            
+            (PGN,DA,SA) = self.parse_j1939_id(id_key)
+            #selected_data_frames.append(self.CAN_groups.get_group(id_key))
             try:
-                for spn in sorted(self.j1939db["J1939PGNdb"]["{}".format(pgn)]["SPNs"]):
+                for spn in sorted(self.j1939db["J1939PGNdb"]["{}".format(PGN)]["SPNs"]):
                     spn_name = self.j1939db["J1939SPNdb"]["{}".format(spn)]["Name"]
                     self.spn_list.append(spn)
                     self.spn_plot_checkbox[spn]= QCheckBox("Plot SPN {}: {}".format(spn,spn_name),self)
-                    self.spn_plot_checkbox[spn].stateChanged.connect(partial(self.plot_SPN,spn,id_key)) #We need to pass the SPN to the plotte
+                    self.spn_plot_checkbox[spn].stateChanged.connect(partial(self.plot_SPN,spn,id_key)) #We need to pass the SPN to the plotter
             except KeyError:
                 pass
         for spn in sorted(self.spn_list):
             self.control_box_layout.addWidget(self.spn_plot_checkbox[spn])
-
         #set newly updated widget to display in the scroll box
         self.control_scroll_area.setWidget(self.control_box)
         
-    def load_message_table(self):
-        if len(self.id_selection_list) == 0:
-            #don't do anything if there's nothing selected.
-            return
-        
-        #Do some preliminary Table operations
-        self.data_table.clear()
-        self.data_table.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
-        self.data_table.setSortingEnabled(False)
-        self.data_table.setRowCount(len(self.message_list))            
-
-        loading_table_progress = QProgressDialog(self)
-        loading_table_progress.setMinimumWidth(300)
-        loading_table_progress.setWindowTitle("Filling Table with Data")
-        loading_table_progress.setMinimumDuration(3000)
-        loading_table_progress.setMaximum(len(self.message_list)-1)
-        loading_table_progress.setWindowModality(Qt.ApplicationModal)
-
-        
-        #Set the headers
-        data_table_columns = ["Real Time", "Rel. Time[s]","Micros", "CAN ID", "PGN","DA","SA","DLC"]
-        for i in range(8):
-           data_table_columns.append("B{}".format(i))
-        self.data_table.setColumnCount(len(data_table_columns))
-        self.data_table.setHorizontalHeaderLabels(data_table_columns)
-        self.data_table.resizeColumnsToContents()
-        
-        #Load the data
-        self.data_table.setRowCount(0)
-        for row in range(len(self.message_list)):
-            loading_table_progress.setValue(row)
-            if loading_table_progress.wasCanceled():
-                break
-            #self.data_table.insertRow(row) #this is slow
-            id_text = "{:08X}".format(self.message_list[row]["ID"])
-            if id_text in self.id_selection_list: #This list was created in a different function
-                row_values = [time.strftime("%Y-%m-%d %H:%M:%S",
-                                            time.localtime(self.message_list[row]["Real Time"]))+
-                                              "{:.6f}".format(self.message_list[row]["Real Time"]%1)[1:],
-                              "{:0.6f}".format(self.message_list[row]["Rel Time"]), 
-                              self.message_list[row]["Logger Micros"],
-                              id_text,
-                              self.message_list[row]["PGN"],
-                              self.message_list[row]["DA"],
-                              self.message_list[row]["SA"],
-                              self.message_list[row]["DLC"]]
-                for i in range(len(self.message_list[row]["Payload"])):
-                    row_values.append("{:02X}".format(self.message_list[row]["Payload"][i]))
-
-                filled_rows = self.data_table.rowCount()
-                self.data_table.insertRow(filled_rows)
-                for col in range(len(data_table_columns)):
-                    entry = QTableWidgetItem("{}".format(row_values[col]))
-                    entry.setFlags(entry.flags() & ~Qt.ItemIsEditable)
-                    self.data_table.setItem(filled_rows,col,entry)
-                #filled_rows+=1
-        #self.data_table.setRowCount(filled_rows)
-        
-        self.statusBar().showMessage("Filled {} rows.".format(filled_rows))            
-        self.data_table.resizeColumnsToContents()
-        #self.data_table.setSortingEnabled(True)
         
     def find_transport_pgns(self):
 
+        loading_progress = QProgressDialog(self)
+        loading_progress.setMinimumWidth(300)
+        loading_progress.setWindowTitle("Loading and Converting Binary")
+        loading_progress.setMinimumDuration(0)
+        loading_progress.setWindowModality(Qt.ApplicationModal)
+
+
         self.id_selection_list = []
-        for trial_id in self.ID_dict.keys():
+        self.message_dataframe["ID"].value_counts().index
+        for trial_id in self.message_dataframe["ID"].value_counts().index:
             #print("{:08X}".format(trial_id & 0x00FF0000))
             if (trial_id & 0x00FF0000) == 0x00EC0000:
-                self.id_selection_list.append("{:08X}".format(trial_id))
+                self.id_selection_list.append(trial_id)
             if (trial_id & 0x00FF0000) == 0x00EB0000:
-                self.id_selection_list.append("{:08X}".format(trial_id))
-        #print(self.id_selection_list)
-        self.load_message_table()
-
-
-        loading_transport_progress = QProgressDialog(self)
-        loading_transport_progress.setMinimumWidth(500)
-        loading_transport_progress.setWindowTitle("Looking for J1939 Transport Layer Messages")
-        loading_transport_progress.setMinimumDuration(0)
-        loading_transport_progress.setMaximum(len(self.message_list))
-        loading_transport_progress.setWindowModality(Qt.ApplicationModal)
-
+                self.id_selection_list.append(trial_id)
+        print(self.id_selection_list)
+        df = self.message_dataframe.loc[self.message_dataframe['ID'].isin(self.id_selection_list)]
+        self.load_message_table(self.message_dataframe.loc[self.message_dataframe['ID'].isin(self.id_selection_list)])
 
         #Load the data
         filled_rows = 0
@@ -660,15 +681,17 @@ class CANDecoderMainWindow(QMainWindow):
         new_packets = {}
         new_length = {}
         BAM_byte_counter = 0
-        for row in range(len(self.message_list)):
-            loading_transport_progress.setValue(row+1)
-            if loading_transport_progress.wasCanceled():
+        row=0
+        loading_progress.setMaximum(len(df))
+        for index,line in df.iterrows():
+            row+=1
+            loading_progress.setValue(row)
+            if loading_progress.wasCanceled():
                 break
-            #self.data_table.insertRow(row) #this is slow
-            trial_id = self.message_list[row]["ID"]
-            sa = self.message_list[row]["SA"]
+            trial_id = line["ID"]
+            sa = line["SA"]
             if (trial_id & 0x00FF0000) == 0x00EC0000: #connection management message
-                message = self.message_list[row]["Bytes"]
+                message = line["Bytes"]
     
                 if message[0] == 32: #BAM,CTS
                     new_pgn[sa] = (message[7] << 16) + (message[6] << 8) + message[5]
@@ -677,7 +700,7 @@ class CANDecoderMainWindow(QMainWindow):
                     new_data[sa] = [0xFF for i in range(7*new_packets[sa])]
                     
             elif (trial_id & 0x00FF0000) == 0x00EB0000: # Data Transfer
-                message = self.message_list[row]["Bytes"]
+                message = line["Bytes"]
                 #print("{:08X}".format(trial_id) + "".join(" {:02X}".format(d) for d in message))
                 if sa in new_data.keys():
                     for b,i in zip(message[1:],range(7)):
@@ -685,9 +708,9 @@ class CANDecoderMainWindow(QMainWindow):
                     if message[0] == new_packets[sa]:
                         data_bytes = bytes(new_data[sa][0:new_length[sa]])
                         if sa in self.BAMs.keys():
-                            self.BAMs[sa].append( (self.message_list[row]["Real Time"],data_bytes,new_pgn[sa]) )
+                            self.BAMs[sa].append( (line["Abs. Time"],data_bytes,new_pgn[sa]) )
                         else:
-                            self.BAMs[sa]= [ (self.message_list[row]["Real Time"],data_bytes,new_pgn[sa]) ]
+                            self.BAMs[sa]= [ (line["Abs. Time"],data_bytes,new_pgn[sa]) ]
                 
 
         #Set the headers
@@ -726,43 +749,44 @@ class CANDecoderMainWindow(QMainWindow):
     def show_transport_dock(self):
         self.transport_layer_dock.show()
 
-def excepthook(excType, excValue, tracebackobj):
+class CANMessageModel(QAbstractTableModel): 
     """
-    Global function to catch unhandled exceptions.
-    
-    @param excType exception type
-    @param excValue exception value
-    @param tracebackobj traceback object
+    Class to populate a table view with a pandas dataframe
     """
-    separator = '-' * 80
-    logFile = "simple.log"
-    notice = \
-        """An unhandled exception occurred. Please report the problem\n"""\
-        """using the error reporting dialog or via email to <%s>.\n"""\
-        """A log has been written to "%s".\n\nError information:\n""" % \
-        ("yourmail at server.com", "")
-    versionInfo="0.0.1"
-    timeString = time.strftime("%Y-%m-%d, %H:%M:%S")
+    def __init__(self, data, parent=None):
+        QAbstractTableModel.__init__(self, parent)
+        self._data = data
     
-    
-    tbinfofile = cStringIO.StringIO()
-    traceback.print_tb(tracebackobj, None, tbinfofile)
-    tbinfofile.seek(0)
-    tbinfo = tbinfofile.read()
-    errmsg = '%s: \n%s' % (str(excType), str(excValue))
-    sections = [separator, timeString, separator, errmsg, separator, tbinfo]
-    msg = '\n'.join(sections)
-    try:
-        f = open(logFile, "w")
-        f.write(msg)
-        f.write(versionInfo)
-        f.close()
-    except IOError:
-        pass
-    errorbox = QtGui.QMessageBox()
-    errorbox.setText(str(notice)+str(msg)+str(versionInfo))
-    errorbox.exec_()
-sys.excepthook = excepthook
+    def rowCount(self, parent=None):
+        return self._data.shape[0]
+
+    def columnCount(self, parent=None):
+        return self._data.shape[1]
+
+    def data(self, index, role=Qt.DisplayRole):
+        if index.isValid():
+            if role == Qt.DisplayRole:
+                #return str(self._data.iloc[index.row(), index.column()])
+                data_val = self._data.iloc[index.row(), index.column()]
+                #print(type(data_val))
+                if type(data_val) is np.int64:
+                    if data_val < 256 and index.column() > 7:  
+                        return "{:02X}".format(data_val)
+                    else:
+                        if  index.column() == 3: #The CAN ID column
+                            return "{:08X}".format(data_val)
+                        else:
+                            return "{}".format(data_val)
+                elif type(data_val) is np.float64:
+                        return "{:0.6f}".format(data_val)
+                else:
+                    return str(data_val)
+        return None
+
+    def headerData(self, col, orientation, role):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return self._data.columns[col]
+        return None
 
 if __name__ == '__main__':
     #Start the program this way according to https://stackoverflow.com/questions/40094086/python-kernel-dies-for-second-run-of-pyqt5-gui
