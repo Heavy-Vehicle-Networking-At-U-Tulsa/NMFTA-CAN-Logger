@@ -73,7 +73,7 @@ class CANDecoderMainWindow(QMainWindow):
         #self.showMaximized()
 
         self.home_directory = os.getcwd()
-        self.message_dataframe = None
+        #self.message_dataframe = None
 
         # Upon startup, run a user interface routine
         self.init_ui()
@@ -82,7 +82,7 @@ class CANDecoderMainWindow(QMainWindow):
         with open("J1939db.json",'r') as j1939_file:
             self.j1939db = json.load(j1939_file)
 
-        #load an examle file
+        #load an example file
         self.data_file_name = "example.bin"
         self.load_binary()
         
@@ -149,7 +149,7 @@ class CANDecoderMainWindow(QMainWindow):
         self.data_toolbar.addAction(load_action)
         self.data_toolbar.addAction(transport_action)
         
-        self.main_widget = QWidget()
+        #self.main_widget = QWidget()
            
         self.main_widget = QWidget(self)
         self.graph_canvas = MyDynamicMplCanvas(self.main_widget, width=5, height=4, dpi=100)
@@ -211,7 +211,7 @@ class CANDecoderMainWindow(QMainWindow):
         self.info_scroll_area = QScrollArea()
         self.info_scroll_area.setWidgetResizable(True)
         #Create the container widget
-        self.info_box = QGroupBox("Suspect Paramter Number (SPN) Information")
+        self.info_box = QGroupBox("Suspect Parameter Number (SPN) Information")
         #put the container widget into the scroll area
         self.info_scroll_area.setWidget(self.info_box)
         #create a layout strategy for the container 
@@ -234,7 +234,7 @@ class CANDecoderMainWindow(QMainWindow):
         self.grid_layout.addWidget(self.graph_canvas,1,2,2,1) 
         self.grid_layout.addWidget(table_box,0,2)
         self.grid_layout.addWidget(self.transport_layer_dock,2,0,1,2)
-        self.grid_layout.setRowStretch(0, 3)
+        self.grid_layout.setRowStretch(0, 5)
         
         self.main_widget.setLayout(self.grid_layout)
         self.setCentralWidget(self.main_widget)
@@ -300,7 +300,7 @@ class CANDecoderMainWindow(QMainWindow):
         first_time = True
         with open(self.data_file_name,'rb') as binFile:         
             while (fileLocation < file_size):
-                block = binFile.read(512)
+                block = binFile.read(512) # This is because the original binary data was created
                 fileLocation+=512
                 binFile.seek(fileLocation)
                 #print(".",end='')
