@@ -234,7 +234,7 @@ class CANDecoderMainWindow(QMainWindow):
         self.grid_layout.addWidget(self.graph_canvas,1,2,2,1) 
         self.grid_layout.addWidget(table_box,0,2)
         self.grid_layout.addWidget(self.transport_layer_dock,2,0,1,2)
-        self.grid_layout.setRowStretch(0, 5)
+        self.grid_layout.setRowStretch(0, 3)
         
         self.main_widget.setLayout(self.grid_layout)
         self.setCentralWidget(self.main_widget)
@@ -275,7 +275,7 @@ class CANDecoderMainWindow(QMainWindow):
             self.statusBar().showMessage(
                     "Successfully Opened {}.".format(self.data_file_name))
             self.setWindowTitle(program_title + " - " + self.data_file_name)
-            self.load_binary(append_data_frame=True)
+            self.load_binary()
 
         else:
            self.statusBar().showMessage("Failed to open file.")
@@ -414,7 +414,7 @@ class CANDecoderMainWindow(QMainWindow):
 
         loading_progress = QProgressDialog(self)
         loading_progress.setMinimumWidth(300)
-        loading_progress.setWindowTitle("Loading and Converting Binary")
+        loading_progress.setWindowTitle("Loading CAN ID Table")
         loading_progress.setMinimumDuration(0)
         loading_progress.setWindowModality(Qt.ApplicationModal)
 
@@ -656,13 +656,13 @@ class CANDecoderMainWindow(QMainWindow):
 
         loading_progress = QProgressDialog(self)
         loading_progress.setMinimumWidth(300)
-        loading_progress.setWindowTitle("Loading and Converting Binary")
+        loading_progress.setWindowTitle("Finding J1939 Transport Protocol Messages")
         loading_progress.setMinimumDuration(0)
         loading_progress.setWindowModality(Qt.ApplicationModal)
 
 
         self.id_selection_list = []
-        self.message_dataframe["ID"].value_counts().index
+        #self.message_dataframe["ID"].value_counts().index
         for trial_id in self.message_dataframe["ID"].value_counts().index:
             #print("{:08X}".format(trial_id & 0x00FF0000))
             if (trial_id & 0x00FF0000) == 0x00EC0000:
@@ -671,7 +671,8 @@ class CANDecoderMainWindow(QMainWindow):
                 self.id_selection_list.append(trial_id)
         print(self.id_selection_list)
         df = self.message_dataframe.loc[self.message_dataframe['ID'].isin(self.id_selection_list)]
-        self.load_message_table(self.message_dataframe.loc[self.message_dataframe['ID'].isin(self.id_selection_list)])
+        print(df.head())
+        self.load_message_table(df)
 
         #Load the data
         filled_rows = 0
@@ -704,7 +705,10 @@ class CANDecoderMainWindow(QMainWindow):
                 #print("{:08X}".format(trial_id) + "".join(" {:02X}".format(d) for d in message))
                 if sa in new_data.keys():
                     for b,i in zip(message[1:],range(7)):
-                        new_data[sa][i+7*(message[0]-1)] = b
+                        try:
+                            new_data[sa][i+7*(message[0]-1)] = b
+                        except Exception as e:
+                            print (e)
                     if message[0] == new_packets[sa]:
                         data_bytes = bytes(new_data[sa][0:new_length[sa]])
                         if sa in self.BAMs.keys():
