@@ -7,7 +7,7 @@ uint32_t currentMillis = 0;
 uint32_t previousMillis100 = 0;
 uint32_t previousMillis10 = 0;
 #define BAUDRATE0 250000
-#define BAUDRATE1 666000
+#define BAUDRATE1 1000000
 int led = 13;
 
 uint32_t RXCount0 = 0;
@@ -19,7 +19,7 @@ uint32_t RXCount1 = 0;
 
 void setup() {
   // put your setup code here, to run once:
- Can1.begin(BAUDRATE1);
+ Can1.begin(BAUDRATE0);
  Can0.begin(BAUDRATE0);
  pinMode(SILENT_0,OUTPUT);
  pinMode(SILENT_1,OUTPUT);
@@ -59,7 +59,7 @@ txmsg1.buf[0] = 255;
 txmsg1.buf[1] = 255;
 txmsg1.buf[2] = 255;
 txmsg1.buf[3] = 255;
-Can1.write(txmsg1);
+//Can1.write(txmsg1);
 Can0.write(txmsg);
 }
 }
