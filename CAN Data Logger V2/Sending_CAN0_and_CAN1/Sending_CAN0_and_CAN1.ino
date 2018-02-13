@@ -1,13 +1,17 @@
 #include <FlexCAN.h>
 #include <kinetis_flexcan.h>
 static CAN_message_t txmsg,txmsg1, rxmsg;
-
+unsigned long txCount, rxCount;
+unsigned long txTimer, rxTimer;
 uint32_t currentMillis = 0;
 uint32_t previousMillis100 = 0;
 uint32_t previousMillis10 = 0;
 #define BAUDRATE0 250000
 #define BAUDRATE1 666000
 int led = 13;
+
+uint32_t RXCount0 = 0;
+uint32_t RXCount1 = 0;
 
 #define SILENT_0 39
 #define SILENT_1 38

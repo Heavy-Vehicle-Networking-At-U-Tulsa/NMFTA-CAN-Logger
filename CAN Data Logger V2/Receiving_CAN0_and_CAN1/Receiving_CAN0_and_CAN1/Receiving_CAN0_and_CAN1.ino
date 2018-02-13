@@ -18,10 +18,6 @@ uint32_t RXCount1 = 0;
 //ID, Data Length Code, and Data Buffer
 static CAN_message_t rxmsg;
 
-#define GREEN_LED_PIN 6
-#define RED_LED_PIN 14
-#define YELLOW_LED_PIN 5
-
 #define SILENT_0 39
 #define SILENT_1 38
 #define SILENT_2 37
@@ -47,13 +43,7 @@ void printFrame(CAN_message_t rxmsg, uint8_t channel, uint32_t RXCount)
 
 void setup() {
   // put your setup code here, to run once:
-  pinMode(GREEN_LED_PIN,OUTPUT);
-  pinMode(YELLOW_LED_PIN,OUTPUT);
-  pinMode(RED_LED_PIN,OUTPUT);
   
-  pinMode(20,INPUT_PULLUP);
-  pinMode(21,INPUT_PULLUP);
-
   pinMode(SILENT_0,OUTPUT);
   pinMode(SILENT_1,OUTPUT);
   pinMode(SILENT_2,OUTPUT);
@@ -78,10 +68,8 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
-  buttonState = !digitalRead(21); 
-  digitalWrite(GREEN_LED_PIN,buttonState);
-  digitalWrite(YELLOW_LED_PIN,buttonState);
-  digitalWrite(RED_LED_PIN,buttonState);
+ 
+  
   while (Can0.available()) {
     Can0.read(rxmsg);
     printFrame(rxmsg,0,RXCount0++);
