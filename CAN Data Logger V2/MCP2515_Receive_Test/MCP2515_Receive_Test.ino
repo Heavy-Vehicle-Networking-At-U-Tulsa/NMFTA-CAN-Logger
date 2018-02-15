@@ -14,19 +14,23 @@ void setup()
 {
   
   Serial.begin(115200);
-  CAN0.begin(CAN_500KBPS);                       // init can bus : baudrate = 500k 
-  Serial.println("MCP2515 Library Receive Example...");
+  while(!Serial);
+  if(CAN0.begin(CAN_500KBPS)==CAN_OK) Serial.println("CAN Started");
+  else Serial.println("MCP CAN Init Fail.");
 }
+elapsedMillis loopTimer;
 
 void loop()
 {
     
-      CAN0.readMsgBuf(&len, rxBuf);              // Read data: len = data length, buf = data byte(s)
-      rxId = CAN0.getCanId();                    // Get message ID
-      Serial.print("ID: ");
-      Serial.print(rxId, HEX);
-      Serial.print("  Data: ");
-      for(int i = 0; i<len; i++)                // Print each byte of the data
+    if(CAN0.readMsgBuf(&len, rxBuf)==CAN_OK)              // Read data: len = data length, buf = data byte(s)
+      {
+        loopTimer = 0;
+        rxId = CAN0.getCanId();                    // Get message ID
+        Serial.print("ID: ");
+        Serial.print(rxId, HEX);
+        Serial.print("  Data: ");
+        for(int i = 0; i<len; i++)                // Print each byte of the data
       {
         if(rxBuf[i] < 0x10)                     // If data byte is less than 0x10, add a leading zero
         {
@@ -37,6 +41,7 @@ void loop()
       }
       Serial.println();
     
+}
 }
 
 /*********************************************************************************************************
