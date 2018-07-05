@@ -105,6 +105,12 @@ class CANDecoderMainWindow(QMainWindow):
         open_file.triggered.connect(self.load_data)
         file_menu.addAction(open_file)
 
+        save_file = QAction(QIcon(r'floppy-disk-save-button-icon-65887.png'), '&Save', self)
+        save_file.setShortcut('Ctrl+S')
+        save_file.setStatusTip('Save File')
+        save_file.triggered.connect(self.save)
+        file_menu.addAction(save_file)
+
         exit_action = QAction(QIcon(r'icons8_Exit_Sign_48px.png'), '&Exit', self)        
         exit_action.setShortcut('Ctrl+Q')
         exit_action.setStatusTip('Exit application')
@@ -142,6 +148,7 @@ class CANDecoderMainWindow(QMainWindow):
         #build the entries in the dockable tool bar
         self.main_toolbar = self.addToolBar("Main")
         self.main_toolbar.addAction(open_file)
+        self.main_toolbar.addAction(save_file)
         self.main_toolbar.addAction(exit_action)
         self.main_toolbar.addAction(about_action)
 
@@ -319,6 +326,7 @@ class CANDecoderMainWindow(QMainWindow):
                         first_time = False
                     DLC = (timeMicrosecondsAndDLC & 0xFF000000) >> 24
                     ID = struct.unpack("<L",record[12:16])[0]
+                    print(ID)
                     (PGN,DA,SA) = self.parse_j1939_id(ID)
                     message_bytes = record[16:24]
 
@@ -335,6 +343,10 @@ class CANDecoderMainWindow(QMainWindow):
         #self.load_message_table(self.message_dataframe)
         self.load_can_id_table()
         self.find_transport_pgns()
+
+
+    def save(self):
+        self.message_dataframe.to_csv('save_file.csv', sep=',')
 
     def load_message_table(self,message_df):
         
