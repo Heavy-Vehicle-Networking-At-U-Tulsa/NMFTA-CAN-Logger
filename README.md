@@ -51,4 +51,6 @@ A configuration switch is included that can electrically combine the different C
 
 Green and red LEDs are available on the board for a visual indication of the mode of operation. These LEDs can be seen through the clear heatshrink that wraps the board.
 
+## Acknowledgements
 
+This material is based upon work supported by the National Science Foundation under Grant No. 1715409.
