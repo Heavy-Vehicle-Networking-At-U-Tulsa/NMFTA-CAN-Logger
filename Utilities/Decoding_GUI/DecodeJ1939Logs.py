@@ -290,7 +290,7 @@ class CANDecoderMainWindow(QMainWindow):
         print("File size is {} bytes".format(file_size))
 
         loading_progress = QProgressDialog(self)
-        loading_progress.setMinimumWidth(300)
+        loading_progress.setMinimumWidth(600)
         loading_progress.setWindowTitle("Loading and Converting Binary")
         loading_progress.setMinimumDuration(0)
         loading_progress.setMaximum(file_size)
@@ -307,30 +307,56 @@ class CANDecoderMainWindow(QMainWindow):
                 loading_progress.setValue(fileLocation)
                 if loading_progress.wasCanceled():
                     break
-                for recordNum in range(21):
-                    record = block[4+recordNum*24:4+(recordNum+1)*24]
-                    
-                    timeSeconds = struct.unpack("<L",record[0:4])[0]
-                    timeMicrosecondsAndDLC = struct.unpack("<L",record[8:12])[0]
-                    timeMicroseconds = timeMicrosecondsAndDLC & 0x00FFFFFF
-                    real_time = timeSeconds + timeMicroseconds * 0.000001
-                    if first_time:
+                if block[0:4] == b'CAN2':
+                    for recordNum in range(19):
+                        record = block[4+recordNum*25:4+(recordNum+1)*25]
+                        channel = record[0]
+                        timeSeconds = struct.unpack("<L",record[1:5])[0]
+                        timeMicrosecondsAndDLC = struct.unpack("<L",record[13:17])[0]
+                        timeMicroseconds = timeMicrosecondsAndDLC & 0x00FFFFFF
+                        real_time = timeSeconds + timeMicroseconds * 0.000001
+                        if first_time:
+                            previous_time = real_time
+                            first_time = False
+                        DLC = (timeMicrosecondsAndDLC & 0xFF000000) >> 24
+                        ID = struct.unpack("<L",record[9:13])[0]
+                        (PGN,DA,SA) = self.parse_j1939_id(ID)
+                        message_bytes = record[17:25]
+
+                        if startTime == None:
+                            startTime=timeSeconds + timeMicroseconds * 0.000001
+                        delta_time = real_time - previous_time
                         previous_time = real_time
-                        first_time = False
-                    DLC = (timeMicrosecondsAndDLC & 0xFF000000) >> 24
-                    ID = struct.unpack("<L",record[12:16])[0]
-                    (PGN,DA,SA) = self.parse_j1939_id(ID)
-                    message_bytes = record[16:24]
+                        rel_time = real_time-startTime
+                        
+                        message_list.append([channel,real_time,rel_time,delta_time,ID,PGN,DA,SA,DLC] + [b for b in message_bytes] + [message_bytes])
 
-                    if startTime == None:
-                        startTime=timeSeconds + timeMicroseconds * 0.000001
-                    delta_time = real_time - previous_time
-                    previous_time = real_time
-                    rel_time = real_time-startTime
-                    
-                    message_list.append([real_time,rel_time,delta_time,ID,PGN,DA,SA,DLC] + [b for b in message_bytes] + [message_bytes])
+                else:
+                    channel = 0
+                    for recordNum in range(21):
+                        record = block[4+recordNum*24:4+(recordNum+1)*24]
+                        
+                        timeSeconds = struct.unpack("<L",record[0:4])[0]
+                        timeMicrosecondsAndDLC = struct.unpack("<L",record[8:12])[0]
+                        timeMicroseconds = timeMicrosecondsAndDLC & 0x00FFFFFF
+                        real_time = timeSeconds + timeMicroseconds * 0.000001
+                        if first_time:
+                            previous_time = real_time
+                            first_time = False
+                        DLC = (timeMicrosecondsAndDLC & 0xFF000000) >> 24
+                        ID = struct.unpack("<L",record[12:16])[0]
+                        (PGN,DA,SA) = self.parse_j1939_id(ID)
+                        message_bytes = record[16:24]
 
-        self.message_dataframe = pd.DataFrame(message_list, columns = ["Abs. Time","Rel. Time","Delta Time","ID","PGN","DA","SA","DLC","B0","B1","B2","B3","B4","B5","B6","B7","Bytes"])
+                        if startTime == None:
+                            startTime=timeSeconds + timeMicroseconds * 0.000001
+                        delta_time = real_time - previous_time
+                        previous_time = real_time
+                        rel_time = real_time-startTime
+                        
+                        message_list.append([channel,real_time,rel_time,delta_time,ID,PGN,DA,SA,DLC] + [b for b in message_bytes] + [message_bytes])
+
+        self.message_dataframe = pd.DataFrame(message_list, columns = ["Channel","Abs. Time","Rel. Time","Delta Time","ID","PGN","DA","SA","DLC","B0","B1","B2","B3","B4","B5","B6","B7","Bytes"])
         
         #self.load_message_table(self.message_dataframe)
         self.load_can_id_table()
@@ -580,7 +606,7 @@ class CANDecoderMainWindow(QMainWindow):
                 values.append(spn_value)
             #Plot the data
             self.graph_canvas.plot_data(times,values,"SPN {}".format(spn))
-            self.graph_canvas.title(self.data_file_name)
+            self.graph_canvas.title(os.path.basename(self.data_file_name))
             self.graph_canvas.xlabel("Time (sec)")
             self.graph_canvas.ylabel("{} ({})".format(name,units))
             
